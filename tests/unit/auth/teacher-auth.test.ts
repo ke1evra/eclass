@@ -70,6 +70,19 @@ describe('teacher auth service — ECLASS-13', () => {
       expect(JSON.stringify(res)).not.toContain('long-pass-123')
     })
 
+    it('CB-5: identical passwords produce DIFFERENT hashes (per-user salt)', async () => {
+      const store = makeStore()
+      const a = createAuthService({ store, clock, sessionTtlMs: 60 * 60 * 1000 })
+      const r1 = await a.signup({ email: 'a@school.ru', password: 'same-secret-1' })
+      const r2 = await a.signup({ email: 'b@school.ru', password: 'same-secret-1' })
+      if (!r1.ok || !r2.ok) throw new Error('setup')
+      const u1 = await store.getUser(r1.userId)
+      const u2 = await store.getUser(r2.userId)
+      expect(u1?.passwordHash).not.toBe(u2?.passwordHash)
+      // And neither is the legacy static-salt SHA-256 of this password.
+      expect(u1?.passwordHash).not.toMatch(/^[0-9a-f]{64}$/)
+    })
+
     it('rejects an invalid email', async () => {
       const res = await auth.signup({ email: 'not-an-email', password: 'long-pass-123' })
       expect(res.ok).toBe(false)
@@ -164,39 +177,46 @@ describe('teacher auth service — ECLASS-13', () => {
 
   describe('rate limiting', () => {
     it('blocks repeated failed logins for the same email', async () => {
-      // Use a store that simulates repeated attempts.
-      let attempts = 0
-      const rateStore: AuthStore = {
-        ...makeStore(),
-        async countRecentSignups() {
-          return 0
-        },
-        async findUserByEmail(email) {
-          return email === 'teacher@school.ru'
-            ? { id: 'u1', email, passwordHash: 'x', emailConfirmed: true }
-            : undefined
-        },
-        async getUser() {
-          return undefined
-        },
-        async insertUser() {},
-        async confirmEmail() {},
-        async insertSession() {},
-        async getSession(): Promise<StoredSession | undefined> {
-          return undefined
-        },
-        async revokeSession() {},
-      }
-      // Track failures via a side-channel in countRecentSignups-like hook:
-      // we model it by having the service count attempts internally.
-      const rateAuth = createAuthService({ store: rateStore, clock, sessionTtlMs: 60 * 60 * 1000, maxFailedAttempts: 3 })
+      const store = makeStore()
+      const rateAuth = createAuthService({ store, clock, sessionTtlMs: 60 * 60 * 1000, maxFailedAttempts: 3 })
+      const signup = await rateAuth.signup({ email: 'teacher@school.ru', password: 'long-pass-123' })
+      if (!signup.ok) throw new Error('setup')
+      await rateAuth.confirmEmail(signup.userId)
       for (let i = 0; i < 3; i++) {
-        await rateAuth.login({ email: 'teacher@school.ru', password: 'wrong' })
-        attempts++
+        await rateAuth.login({ email: 'teacher@school.ru', password: 'wrong-pass-999' })
       }
-      const blocked = await rateAuth.login({ email: 'teacher@school.ru', password: 'wrong' })
+      const blocked = await rateAuth.login({ email: 'teacher@school.ru', password: 'wrong-pass-999' })
       expect(blocked.ok).toBe(false)
       if (!blocked.ok) expect(blocked.code).toBe('rate_limited')
+    })
+
+    it('CB-5: rate limit resets after the sliding window, correct password works again', async () => {
+      // Use a controllable clock to advance past the window.
+      let now = fixedNow
+      const advClock: Clock = { now: () => now }
+      const store = makeStore()
+      const rateAuth = createAuthService({
+        store,
+        clock: advClock,
+        sessionTtlMs: 60 * 60 * 1000,
+        maxFailedAttempts: 3,
+        rateLimitWindowMs: 15 * 60 * 1000,
+      })
+      const signup = await rateAuth.signup({ email: 'teacher@school.ru', password: 'long-pass-123' })
+      if (!signup.ok) throw new Error('setup')
+      await rateAuth.confirmEmail(signup.userId)
+
+      // Trip the rate limit with wrong passwords.
+      for (let i = 0; i < 3; i++) {
+        await rateAuth.login({ email: 'teacher@school.ru', password: 'wrong-pass-999' })
+      }
+      const blocked = await rateAuth.login({ email: 'teacher@school.ru', password: 'long-pass-123' })
+      expect(blocked.ok).toBe(false)
+
+      // Advance the clock past the window — failures expire, correct password works.
+      now = fixedNow + 16 * 60 * 1000
+      const ok = await rateAuth.login({ email: 'teacher@school.ru', password: 'long-pass-123' })
+      expect(ok.ok).toBe(true)
     })
   })
 

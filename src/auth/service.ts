@@ -13,7 +13,7 @@
  *   - email must be confirmed before login issues a session;
  *   - repeated failed logins are rate-limited per email.
  */
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 
 export interface Clock {
   now(): number
@@ -77,29 +77,65 @@ interface Options {
   clock: Clock
   sessionTtlMs: number
   maxFailedAttempts?: number
+  /** Sliding window for rate limiting; failures older than this are expunged. */
+  rateLimitWindowMs?: number
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const MIN_PASSWORD = 8
 const DEFAULT_MAX_FAILED = 5
+const DEFAULT_RATE_WINDOW_MS = 15 * 60 * 1000
+const SCRYPT_KEYLEN = 32
 
-/** Salted SHA-256. Strong enough for MVP; swap for argon2 in ECLASS-17 hardening. */
-const hashPassword = (password: string): string => {
-  const salt = 'eclass-v1'
-  return createHash('sha256').update(salt + password).digest('hex')
+/**
+ * Per-user salted password hashing (CB-5). Uses scrypt (available in Node
+ * core, no native deps) with a unique random salt per user. The stored string
+ * is `saltHex$hashHex` so verification can re-derive with the same salt.
+ */
+const hashPassword = (password: string, saltHex?: string): string => {
+  const salt = saltHex ? Buffer.from(saltHex, 'hex') : randomBytes(16)
+  const hash = scryptSync(password, salt, SCRYPT_KEYLEN)
+  return `${salt.toString('hex')}$${hash.toString('hex')}`
 }
 
-const constantTimeEqual = (a: string, b: string): boolean => {
-  const ab = Buffer.from(a)
-  const bb = Buffer.from(b)
-  if (ab.length !== bb.length) return false
-  return timingSafeEqual(ab, bb)
+const verifyPassword = (password: string, stored: string): boolean => {
+  const [saltHex, hashHex] = stored.split('$')
+  if (!saltHex || !hashHex) return false
+  const computed = scryptSync(password, Buffer.from(saltHex, 'hex'), SCRYPT_KEYLEN)
+  const expected = Buffer.from(hashHex, 'hex')
+  if (computed.length !== expected.length) return false
+  return timingSafeEqual(computed, expected)
 }
 
 export function createAuthService(opts: Options): AuthService {
   const { store, clock, sessionTtlMs } = opts
   const maxFailed = opts.maxFailedAttempts ?? DEFAULT_MAX_FAILED
-  const failedByIp = new Map<string, number>()
+  const rateWindow = opts.rateLimitWindowMs ?? DEFAULT_RATE_WINDOW_MS
+  /**
+   * Sliding-window rate limit (CB-5): each email maps to the timestamps of its
+   * recent failures. We prune entries older than `rateWindow` before counting,
+   * so a legitimate user is unlocked again once the window passes — and a
+   * correct password clears the window immediately.
+   */
+  const failedAtByIp = new Map<string, number[]>()
+
+  const recentFailures = (email: string): number[] => {
+    const now = clock.now()
+    const all = failedAtByIp.get(email) ?? []
+    const recent = all.filter((t) => now - t < rateWindow)
+    failedAtByIp.set(email, recent)
+    return recent
+  }
+
+  const recordFailure = (email: string): void => {
+    const recent = recentFailures(email)
+    recent.push(clock.now())
+    failedAtByIp.set(email, recent)
+  }
+
+  const clearFailures = (email: string): void => {
+    failedAtByIp.delete(email)
+  }
 
   return {
     async signup({ email, password }) {
@@ -125,21 +161,20 @@ export function createAuthService(opts: Options): AuthService {
 
     async login({ email, password }) {
       // Rate limit by email: too many recent failures blocks further attempts.
-      const fails = failedByIp.get(email) ?? 0
-      if (fails >= maxFailed) {
+      if (recentFailures(email).length >= maxFailed) {
         return { ok: false, code: 'rate_limited' }
       }
       if (!EMAIL_RE.test(email) || password.length < MIN_PASSWORD) {
         // count as a failure to slow brute force on obviously-bad input
-        failedByIp.set(email, fails + 1)
+        recordFailure(email)
         return { ok: false, code: 'invalid_credentials' }
       }
 
       const user = await store.findUserByEmail(email)
       // SAME failure code whether user is missing OR password is wrong.
-      const passwordOk = user ? constantTimeEqual(user.passwordHash, hashPassword(password)) : false
+      const passwordOk = user ? verifyPassword(password, user.passwordHash) : false
       if (!user || !passwordOk) {
-        failedByIp.set(email, fails + 1)
+        recordFailure(email)
         return { ok: false, code: 'invalid_credentials' }
       }
       if (!user.emailConfirmed) {
@@ -153,7 +188,7 @@ export function createAuthService(opts: Options): AuthService {
         revoked: false,
       }
       await store.insertSession(session)
-      failedByIp.set(email, 0)
+      clearFailures(email)
       return {
         ok: true,
         sessionId: session.id,
