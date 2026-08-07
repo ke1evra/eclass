@@ -6,42 +6,39 @@ import { resolveActor } from '@/auth/payload-resolver'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
 
 /**
- * ECLASS-65 — RESTART persistence proof.
+ * ECLASS-65 — DB-backed session resolution across Payload instances.
  *
- * A "restart" means a FRESH application context: a new Payload instance with
- * its OWN connection to the same MongoDB, NOT the cached singleton. We boot a
- * second Payload with a unique `key` (so Payload's singleton cache returns a
- * distinct instance with a fresh mongoose connection) and resolve a session
- * created in the primary instance through it.
+ * IMPORTANT — what this proves and what it does NOT:
+ *   PROVES: a session created via instance A is found via a SECOND Payload
+ *           instance with its own connection to the same MongoDB. The data
+ *           lives in the database, not in a per-instance Map.
+ *   DOES NOT PROVE: survival of an actual process stop/restart. That invariant
+ *                   is covered by the two-step CI job (seed → resolve in
+ *                   separate processes) in ci.yml, NOT by this in-process test.
  *
- * This proves the session survives across application contexts against the real
- * database — without the brittleness of spawning a child process (which was
- * exit-code-13-flaky across Node 24 / tsx / PATH on the CI runner). If the
- * session were stored in a Map (the old in-memory wiring), the second instance
- * would NOT find it.
+ * The cross-process proof is deliberately split out of vitest because it must
+ * run as genuinely separate Node processes (seed writes, exits; resolve boots
+ * fresh against the same DB).
  */
 
 const HOUR = 3_600_000
 
-integrationSuite('ECLASS-65: resolveActor survives an application restart', () => {
-  let restartedPayload: Payload
+integrationSuite('ECLASS-65: session resolves across Payload instances (DB-backed)', () => {
+  let secondInstance: Payload
 
   beforeEach(async () => {
     await clearData()
-    // Boot a fresh Payload instance with a unique key — Payload caches by key,
-    // so this returns a NEW instance with its own DB connection, modelling a
-    // restarted process against the same DATABASE_URL.
-    restartedPayload = await getPayload({
+    secondInstance = await getPayload({
       config,
-      key: `restart-${Date.now()}-${randomBytes(4).toString('hex')}`,
+      key: `second-${Date.now()}-${randomBytes(4).toString('hex')}`,
     })
   })
 
-  it('a session created in instance A resolves in a freshly-booted instance B', async () => {
+  it('a session created in instance A is found via a second instance B', async () => {
     const primary = await getPayloadSingleton()
     const user = await primary.create({
       collection: 'users',
-      data: { email: uniqueEmail('restart'), password: 'longpass123', role: 'teacher' },
+      data: { email: uniqueEmail('cross'), password: 'longpass123', role: 'teacher' },
       overrideAccess: true,
     })
     const sessionId = randomBytes(18).toString('base64url')
@@ -51,13 +48,11 @@ integrationSuite('ECLASS-65: resolveActor survives an application restart', () =
       overrideAccess: true,
     })
 
-    // Resolve through the RESTARTED instance — independent connection, same DB.
     const clock = { now: () => Date.now() }
-    const actor = await resolveActor(restartedPayload, sessionId, clock)
+    const actor = await resolveActor(secondInstance, sessionId, clock)
     expect(actor).toEqual({ id: user.id, role: 'teacher' })
 
-    // Sanity: an unknown session still resolves to null through the restarted
-    // instance (it is not sharing the primary's in-memory state).
-    expect(await resolveActor(restartedPayload, 'never-existed', clock)).toBeNull()
+    // The second instance does NOT share the primary's in-memory state.
+    expect(await resolveActor(secondInstance, 'never-existed', clock)).toBeNull()
   })
 })

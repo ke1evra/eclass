@@ -27,7 +27,7 @@ integrationSuite('ECLASS-65: unified auth authority', () => {
     await clearData()
   })
 
-  it('signup → confirm → login → new-process resolve → logout', async () => {
+  it('signup → confirm → login → resolve → logout (single instance)', async () => {
     const p = await getPayloadSingleton()
     const email = uniqueEmail('auth')
 

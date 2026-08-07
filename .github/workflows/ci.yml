@@ -74,6 +74,19 @@ jobs:
       - name: Unit + integration (with coverage gate)
         run: npm test -- --coverage
 
+      - name: Cross-process restart proof (ECLASS-65)
+        # The defining restart invariant: seed in process A (which exits), then
+        # resolve in a FRESH process B against the same MongoDB. Proves the
+        # session lives in the DB, not in memory. Uses $RUNNER_TEMP (0600 via
+        # the seeder) and cleans up the temp file afterwards.
+        run: |
+          SESSION_FILE="$RUNNER_TEMP/eclass-restart-session"
+          SEED_OUT=$(npx tsx scripts/restart-seed.mjs "$SESSION_FILE")
+          echo "$SEED_OUT"
+          USER_ID=$(echo "$SEED_OUT" | awk '{print $2}')
+          npx tsx scripts/restart-resolve.mjs "$SESSION_FILE" "$USER_ID"
+          rm -f "$SESSION_FILE"
+
       - name: Production dependency audit (0 high/critical)
         run: npm audit --omit=dev --audit-level=high
 
