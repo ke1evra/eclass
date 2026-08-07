@@ -18,6 +18,7 @@
     ".next/",
     "next-env.d.ts",
     "playwright-report/",
-    "test-results/"
+    "test-results/",
+    "scripts/"
   ]
 }

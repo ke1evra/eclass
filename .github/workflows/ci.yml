@@ -1,17 +1,12 @@
 name: CI
 
-# ECLASS-11 — test pyramid and CI quality gates.
+# ECLASS-11 / ECLASS-56 — test pyramid, CI quality gates, MongoDB persistence.
 #
-# Two workflows:
-#   ci.yml  — runs on every push/PR; fast gates: typecheck, lint, unit,
-#             integration. Blocks merge on any failure.
-#   release-candidate.yml — runs on release-tag; adds TWO consecutive E2E
-#             runs of the critical teacher->student->review flow plus a11y.
+# Quality job: typecheck, lint, build, unit+integration (coverage gate), audit.
+# E2E job: acceptance + a11y against a production build, MongoDB-backed.
 #
-# Acceptance criteria covered:
-#   - CI blocks merge on test/lint/typecheck/a11y failure.
-#   - Tests are isolated and deterministic (factories, no production data).
-#   - Critical E2E runs on every release candidate (twice, consecutively).
+# Persistence: MongoDB replica set (required for transactions, ECLASS-57).
+# A single-node replset is enough for tests; production uses the server Mongo.
 
 on:
   push:
@@ -24,31 +19,37 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
-  # CI must never touch a production database. The job uses an ephemeral
-  # Postgres service container with a throwaway schema.
-  DATABASE_URI: postgresql://eclass:eclass@localhost:5432/eclass_test
+  # CI Mongo: a single-node replica set on the service container.
+  DATABASE_URI: 'mongodb://mongo:27017/eclass-ci?replicaSet=rs0'
   PAYLOAD_SECRET: ci-ephemeral-secret-not-for-prod
   ALLOW_TEST_SEEDING: 'true'
 
 jobs:
   quality:
-    name: typecheck / lint / unit / integration
+    name: typecheck / lint / build / unit / audit
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: eclass
-          POSTGRES_PASSWORD: eclass
-          POSTGRES_DB: eclass_test
-        ports: ['5432:5432']
+      mongo:
+        # mongo with --replset via the entrypoint args; healthcheck waits for
+        # the replica set to become primary.
+        image: mongo:7
+        ports: ['27017:27017']
         options: >-
-          --health-cmd "pg_isready -U eclass"
-          --health-interval 5s
+          --health-cmd 'mongosh --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}) }; db.runCommand({ping:1}).ok"'
+          --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+        env:
+          MONGO_INITDB_DATABASE: eclass-ci
     steps:
       - uses: actions/checkout@v4
+
+      - name: Initiate Mongo replica set
+        run: |
+          mongosh --quiet "mongodb://localhost:27017/eclass-ci" --eval '
+            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
+            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
+          '
 
       - uses: actions/setup-node@v4
         with:
@@ -80,25 +81,29 @@ jobs:
           path: coverage/
 
   e2e:
-    name: E2E acceptance (chromium)
+    name: E2E acceptance + a11y (chromium)
     runs-on: ubuntu-latest
-    # E2E is heavier; it still gates PRs but runs after the fast suite.
     needs: quality
     services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: eclass
-          POSTGRES_PASSWORD: eclass
-          POSTGRES_DB: eclass_test
-        ports: ['5432:5432']
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
         options: >-
-          --health-cmd "pg_isready -U eclass"
-          --health-interval 5s
+          --health-cmd 'mongosh --quiet --eval "db.runCommand({ping:1}).ok"'
+          --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+        env:
+          MONGO_INITDB_DATABASE: eclass-ci
     steps:
       - uses: actions/checkout@v4
+
+      - name: Initiate Mongo replica set
+        run: |
+          mongosh --quiet "mongodb://localhost:27017/eclass-ci" --eval '
+            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
+            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
+          '
 
       - uses: actions/setup-node@v4
         with:
@@ -117,3 +122,12 @@ jobs:
         run: npm run test:e2e
         env:
           CI: 'true'
+
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: |
+            test-results/
+            playwright-report/

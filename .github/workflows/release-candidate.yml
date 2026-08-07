@@ -4,7 +4,7 @@ name: Release candidate
 #
 # Runs only on release tags. The defining requirement: the critical E2E flow
 # (teacher -> student -> review) must pass TWICE, consecutively, against the
-# same build. This catches flakiness before a release, not after.
+# same build. Second run catches flakiness before release.
 
 on:
   push:
@@ -12,7 +12,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  DATABASE_URI: postgresql://eclass:eclass@localhost:5432/eclass_test
+  DATABASE_URI: 'mongodb://mongo:27017/eclass-rc?replicaSet=rs0'
   PAYLOAD_SECRET: rc-ephemeral-secret-not-for-prod
   ALLOW_TEST_SEEDING: 'true'
 
@@ -21,20 +21,25 @@ jobs:
     name: Critical E2E x2 (release gate)
     runs-on: ubuntu-latest
     services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: eclass
-          POSTGRES_PASSWORD: eclass
-          POSTGRES_DB: eclass_test
-        ports: ['5432:5432']
+      mongo:
+        image: mongo:7
+        ports: ['27017:27017']
         options: >-
-          --health-cmd "pg_isready -U eclass"
-          --health-interval 5s
+          --health-cmd 'mongosh --quiet --eval "db.runCommand({ping:1}).ok"'
+          --health-interval 10s
           --health-timeout 5s
           --health-retries 10
+        env:
+          MONGO_INITDB_DATABASE: eclass-rc
     steps:
       - uses: actions/checkout@v4
+
+      - name: Initiate Mongo replica set
+        run: |
+          mongosh --quiet "mongodb://localhost:27017/eclass-rc" --eval '
+            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
+            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
+          '
 
       - uses: actions/setup-node@v4
         with:
@@ -58,3 +63,12 @@ jobs:
         run: npm run test:e2e
         env:
           CI: 'true'
+
+      - name: Upload Playwright traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces-rc
+          path: |
+            test-results/
+            playwright-report/
