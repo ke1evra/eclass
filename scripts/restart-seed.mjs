@@ -63,4 +63,5 @@ await withRetry(() =>
 // 0600 — only the owner can read the opaque session id.
 writeFileSync(outFile, sessionId, { mode: 0o600 })
 console.log(`SEEDED ${user.id} ${sessionId}`)
+await payload.destroy()
 process.exit(0)

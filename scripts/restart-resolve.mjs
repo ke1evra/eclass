@@ -32,11 +32,14 @@ const actor = await resolveActor(payload, sessionId, clock)
 
 if (!actor) {
   console.log('ANONYMOUS')
+  await payload.destroy()
   process.exit(1)
 }
 console.log(`RESOLVED ${actor.id} ${actor.role}`)
 if (actor.id !== expectedUserId) {
   console.error(`MISMATCH: expected ${expectedUserId}, got ${actor.id}`)
+  await payload.destroy()
   process.exit(1)
 }
+await payload.destroy()
 process.exit(0)
