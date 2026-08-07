@@ -46,12 +46,13 @@ integrationSuite('ECLASS-65: resolveActor survives a process restart', () => {
 
     try {
       const result = spawnSync(
-        process.execPath,
-        [join('node_modules', 'tsx', 'dist', 'cli.mjs'), script, sessionFile],
+        'npx',
+        ['tsx', script, sessionFile],
         {
           encoding: 'utf-8',
           env: { ...process.env },
           timeout: 60_000,
+          shell: process.platform === 'win32',
         },
       )
       const out = (result.stdout || '') + (result.stderr || '')
