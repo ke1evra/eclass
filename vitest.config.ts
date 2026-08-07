@@ -26,8 +26,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts', 'src/auth/**/*.ts', 'src/classes/**/*.ts'],
-      exclude: ['**/*.test.ts', 'src/payload.config.ts'],
+      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts', 'src/auth/**/*.ts', 'src/classes/**/*.ts', 'src/students/**/*.ts'],
+      exclude: ['**/*.test.ts', 'src/payload.config.ts', 'src/**/server.ts', 'src/app/**'],
       thresholds: {
         // Critical branches: every lifecycle transition and authorization
         // decision MUST be exercised. Lines/branches are high because the
