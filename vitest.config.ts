@@ -33,7 +33,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts', 'src/auth/service.ts', 'src/auth/session.ts', 'src/classes/**/*.ts', 'src/students/service.ts', 'src/security/**/*.ts', 'src/content/**/*.ts'],
+      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts', 'src/auth/service.ts', 'src/auth/session.ts', 'src/auth/session-adapter.ts', 'src/auth/payload-resolver.ts', 'src/classes/**/*.ts', 'src/students/service.ts', 'src/security/**/*.ts', 'src/content/**/*.ts'],
       exclude: ['**/*.test.ts', 'src/payload.config.ts', 'src/**/server.ts', 'src/app/**'],
       thresholds: {
         // Critical branches: every lifecycle transition and authorization

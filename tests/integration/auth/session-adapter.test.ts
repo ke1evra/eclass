@@ -113,6 +113,26 @@ integrationSuite('ECLASS-65/56: session adapter policy', () => {
     if (!result.ok) expect(result.code).toBe('email_not_confirmed')
   })
 
+  it('login with a blocked user returns invalid_credentials', async () => {
+    const p = await getPayloadSingleton()
+    const email = uniqueEmail('blocked')
+    await p.create({
+      collection: 'users',
+      data: { email, password: 'longpass123', role: 'teacher', emailConfirmed: true, blocked: true },
+      overrideAccess: true,
+    })
+    const adapter = createSessionAdapter({ payload: p, clock, sessionTtlMs: HOUR })
+    const result = await adapter.login({ email, password: 'longpass123' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.code).toBe('invalid_credentials')
+  })
+
+  it('logout on a non-existent session is a no-op (no throw)', async () => {
+    const p = await getPayloadSingleton()
+    const adapter = createSessionAdapter({ payload: p, clock, sessionTtlMs: HOUR })
+    await expect(adapter.logout('nonexistent-session-id')).resolves.toBeUndefined()
+  })
+
   it('the login result NEVER contains hash/password/JWT/token in serialized form', async () => {
     const p = await getPayloadSingleton()
     const email = uniqueEmail('leak')
