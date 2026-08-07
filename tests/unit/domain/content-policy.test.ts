@@ -60,6 +60,21 @@ describe('content publish gate — ECLASS-12', () => {
     expect(CONTENT_SOURCES).toContain('authored')
     expect(CONTENT_SOURCES).not.toContain('copied')
   })
+
+  it('rejects an authored original without a license/permission', () => {
+    const d = canPublishQuestion(
+      validDraft({ source: { kind: 'authored', ref: 'original' } }),
+    )
+    expect(d.allowed).toBe(false)
+    if (!d.allowed) expect(d.reason).toMatch(/license/i)
+  })
+
+  it('publishes an authored original WITH a license', () => {
+    const d = canPublishQuestion(
+      validDraft({ source: { kind: 'authored', ref: 'original', license: 'CC-BY' } }),
+    )
+    expect(d.allowed).toBe(true)
+  })
 })
 
 describe('PII redaction — ECLASS-12', () => {
