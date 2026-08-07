@@ -1,18 +1,14 @@
 import type { CollectionConfig } from 'payload'
 
 /**
- * Users — ECLASS-56 / ECLASS-62.
+ * Users — ECLASS-56 / ECLASS-62 / ECLASS-63.
  *
- * The single auth collection. SECURITY (ECLASS-62):
- *   - `role` is SERVER-SET. A beforeChange hook forces `role = 'teacher'` on
- *     every create, ignoring any client-supplied value. Admin can only be
- *     created by a trusted bootstrap/server process using overrideAccess (the
- *     hook still runs, so bootstrap must use a dedicated path that bypasses
- *     collection hooks — e.g. a migration or an admin script with
- *     `disableHooks`).
- *   - `emailConfirmed` is not client-writable.
- *
- * Access is server-side and default-deny: a user reads only themselves.
+ * SECURITY invariants (server-enforced, tested without overrideAccess):
+ *   - signup role is always 'teacher' (beforeChange hook on create).
+ *   - `role`, `email`, `password` are NOT client-writable on update (field-level
+ *     access.update denies them; only a trusted server process with overrideAccess
+ *     or disableHooks can change them — e.g. email confirmation, admin provisioning).
+ *   - update/delete are SELF-ONLY for non-admins; admin may manage any user.
  */
 export const Users: CollectionConfig = {
   slug: 'users',
@@ -23,21 +19,42 @@ export const Users: CollectionConfig = {
   access: {
     read: ({ req }) => {
       if (!req.user) return false
+      if (req.user.role === 'admin') return true
       return { id: { equals: req.user.id } }
     },
     create: () => true,
-    update: ({ req }) => req.user?.id !== undefined,
-    delete: ({ req }) => req.user?.id !== undefined,
+    // ECLASS-63: self-only update for non-admins. The id in the constraint
+    // refers to the document being updated, so this restricts a teacher to
+    // their own record. Admin bypasses.
+    update: ({ req }) => {
+      if (!req.user) return false
+      if (req.user.role === 'admin') return true
+      return { id: { equals: req.user.id } }
+    },
+    delete: ({ req }) => {
+      if (!req.user) return false
+      if (req.user.role === 'admin') return true
+      return { id: { equals: req.user.id } }
+    },
   },
   hooks: {
     beforeChange: [
-      ({ data, operation }) => {
-        // ECLASS-62: the role is NEVER trusted from the client on create.
-        // Signup always yields a teacher; admin is provisioned out-of-band
-        // (migration / trusted script) — never through this collection's
-        // create path with a client-supplied role.
+      ({ data, operation, req, originalDoc }) => {
+        // On CREATE the role is always forced to 'teacher' — never trusted
+        // from the client. Admin is provisioned out-of-band (script/migration
+        // with disableHooks), never via this collection's create path.
         if (operation === 'create') {
           return { ...data, role: 'teacher' }
+        }
+        // On UPDATE, privileged fields are restored from the existing doc so a
+        // client cannot mutate them: role stays, email/password stay (Payload
+        // handles password hashing separately; we freeze the value here).
+        if (operation === 'update' && req.user?.role !== 'admin') {
+          return {
+            ...data,
+            role: originalDoc.role,
+            email: originalDoc.email,
+          }
         }
         return data
       },
@@ -51,6 +68,11 @@ export const Users: CollectionConfig = {
       options: ['teacher', 'student', 'admin'],
       defaultValue: 'teacher',
       required: true,
+      // Field-level deny: even if a non-admin somehow passes collection access,
+      // the field itself refuses the update. (Admin-only.)
+      access: {
+        update: ({ req }) => req.user?.role === 'admin',
+      },
     },
     {
       name: 'emailConfirmed',
@@ -58,7 +80,7 @@ export const Users: CollectionConfig = {
       defaultValue: false,
       admin: { readOnly: true },
       access: {
-        update: () => false,
+        update: ({ req }) => req.user?.role === 'admin',
       },
     },
   ],

@@ -35,12 +35,16 @@ export const Classes: CollectionConfig = {
   },
   hooks: {
     beforeChange: [
-      ({ data, operation, req }) => {
-        // ECLASS-62: ownerId is derived from the authenticated user on create,
-        // never from the request body. The teacher becomes the owner by fact
-        // of being logged in, not by claiming an id.
+      ({ data, operation, req, originalDoc }) => {
+        // ECLASS-62/63: ownerId is derived from the authenticated user on
+        // create, never from the request body. On update it is IMMUTABLE for
+        // non-admins — the existing ownerId is preserved, so a teacher cannot
+        // reassign their class to another tenant.
         if (operation === 'create' && req.user?.id) {
           return { ...data, ownerId: req.user.id }
+        }
+        if (operation === 'update' && req.user?.role !== 'admin' && originalDoc) {
+          return { ...data, ownerId: originalDoc.ownerId }
         }
         return data
       },
