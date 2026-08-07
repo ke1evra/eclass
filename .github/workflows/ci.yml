@@ -81,9 +81,12 @@ jobs:
         # the seeder) and cleans up the temp file afterwards.
         run: |
           SESSION_FILE="$RUNNER_TEMP/eclass-restart-session"
-          SEED_OUT=$(npx tsx scripts/restart-seed.mjs "$SESSION_FILE")
-          echo "$SEED_OUT"
-          USER_ID=$(echo "$SEED_OUT" | awk '{print $2}')
+          # Capture only the SEEDED line (npx/payload WARN output would corrupt
+          # the awk parse if we took the whole stream).
+          SEED_LINE=$(npx tsx scripts/restart-seed.mjs "$SESSION_FILE" 2>/dev/null | grep '^SEEDED ' | tail -1)
+          echo "$SEED_LINE"
+          USER_ID=$(echo "$SEED_LINE" | awk '{print $2}')
+          test -n "$USER_ID" || { echo "no SEEDED line"; exit 1; }
           npx tsx scripts/restart-resolve.mjs "$SESSION_FILE" "$USER_ID"
           rm -f "$SESSION_FILE"
 
