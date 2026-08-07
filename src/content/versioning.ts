@@ -73,6 +73,8 @@ export interface VersionStore {
   appendQuestionRevision(q: QuestionRevision): Promise<void>
   getQuestion(id: string): Promise<QuestionRevision | undefined>
   getLatestQuestionRevision(subjectVersionId: string, code: string): Promise<QuestionRevision | undefined>
+  /** CB-7: persist a patch to a question revision (no in-place mutation). */
+  updateQuestion(id: string, patch: Partial<QuestionRevision>): Promise<QuestionRevision | undefined>
 }
 
 export type VersionResult<T> = ({ ok: true } & T) | { ok: false; code: string }
@@ -165,7 +167,8 @@ export function createContentVersioningService(opts: Options) {
     async setEditorStatus(questionId: string, status: EditorStatus): Promise<VersionResult<{ updated: true }>> {
       const q = await store.getQuestion(questionId)
       if (!q) return { ok: false, code: 'not_found' }
-      q.editorStatus = status
+      // CB-7: persist via store.updateQuestion, never mutate the fetched object.
+      await store.updateQuestion(questionId, { editorStatus: status })
       return { ok: true, updated: true }
     },
 
@@ -180,9 +183,13 @@ export function createContentVersioningService(opts: Options) {
         editorStatus: q.editorStatus,
       })
       if (!decision.allowed) return { ok: false, code: 'validation_error', reason: decision.reason } as { ok: false; code: string; reason: string }
-      q.publishedAt = clock.now()
-      q.editorStatus = 'published'
-      return { ok: true, published: q }
+      // CB-7: persist the publication through the store.
+      const published = await store.updateQuestion(questionId, {
+        publishedAt: clock.now(),
+        editorStatus: 'published',
+      })
+      if (!published) return { ok: false, code: 'not_found' }
+      return { ok: true, published }
     },
 
     /** A published revision cannot be mutated in place. */
@@ -194,13 +201,15 @@ export function createContentVersioningService(opts: Options) {
       return { ok: false, code: 'immutable_published' }
     },
 
-    /** Fixing published content creates a NEW revision; the old one is preserved. */
+    /** Fixing PUBLISHED content creates a NEW revision; the old one is preserved. */
     async createRevisionFix(
       questionId: string,
       input: { reason: string; source: ContentSource; payload?: unknown },
     ): Promise<VersionResult<{ revision: QuestionRevision }>> {
       const original = await store.getQuestion(questionId)
       if (!original) return { ok: false, code: 'not_found' }
+      // CB-7: a fix is only meaningful against a published revision.
+      if (original.publishedAt === null) return { ok: false, code: 'not_published' }
       const latest = await store.getLatestQuestionRevision(original.subjectVersionId, original.code)
       const nextRevNumber = (latest?.revisionNumber ?? 0) + 1
       const revision: QuestionRevision = {
