@@ -59,8 +59,11 @@ jobs:
 
       - run: npm ci
 
-      - name: Typecheck
+      - name: Typecheck (production)
         run: npm run typecheck
+
+      - name: Typecheck (tests)
+        run: npm run typecheck:tests
 
       - name: Lint
         run: npm run lint

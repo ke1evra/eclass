@@ -18,7 +18,7 @@
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],
-    "types": ["vitest/globals", "node"],
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
@@ -31,5 +31,5 @@
     "**/*.tsx",
     ".next/types/**/*.ts"
   ],
-  "exclude": ["node_modules", "tests/acceptance/playwright-generated", "scripts", "tests"]
+  "exclude": ["node_modules", "tests", "scripts", "tests/acceptance/playwright-generated"]
 }
