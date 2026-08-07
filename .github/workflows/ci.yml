@@ -1,12 +1,11 @@
 name: CI
 
-# ECLASS-11 / ECLASS-56 — test pyramid, CI quality gates, MongoDB persistence.
+# ECLASS-11 / ECLASS-56 / ECLASS-61 — test pyramid, CI quality gates, MongoDB.
 #
-# Quality job: typecheck, lint, build, unit+integration (coverage gate), audit.
-# E2E job: acceptance + a11y against a production build, MongoDB-backed.
-#
-# Persistence: MongoDB replica set (required for transactions, ECLASS-57).
-# A single-node replset is enough for tests; production uses the server Mongo.
+# Mongo runs as a replica set (required for transactions). GitHub Actions
+# `services` cannot pass a custom `command` to the image, and Mongo 7 starts a
+# standalone mongod by default — so we run the replset member ourselves via a
+# `docker run` step and wait for a writable primary before any DB-dependent job.
 
 on:
   push:
@@ -19,8 +18,7 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
-  # CI Mongo: a single-node replica set on the service container.
-  DATABASE_URI: 'mongodb://mongo:27017/eclass-ci?replicaSet=rs0'
+  DATABASE_URL: 'mongodb://127.0.0.1:27017/eclass-ci?replicaSet=rs0&directConnection=true'
   PAYLOAD_SECRET: ci-ephemeral-secret-not-for-prod
   ALLOW_TEST_SEEDING: 'true'
 
@@ -28,28 +26,31 @@ jobs:
   quality:
     name: typecheck / lint / build / unit / audit
     runs-on: ubuntu-latest
-    services:
-      mongo:
-        # mongo with --replset via the entrypoint args; healthcheck waits for
-        # the replica set to become primary.
-        image: mongo:7
-        ports: ['27017:27017']
-        options: >-
-          --health-cmd 'mongosh --quiet --eval "try { rs.status().ok } catch(e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}) }; db.runCommand({ping:1}).ok"'
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-        env:
-          MONGO_INITDB_DATABASE: eclass-ci
     steps:
       - uses: actions/checkout@v4
 
-      - name: Initiate Mongo replica set
+      - name: Start MongoDB replica set (single node)
         run: |
-          mongosh --quiet "mongodb://localhost:27017/eclass-ci" --eval '
-            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
-            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
-          '
+          docker run -d --name mongo-rs \
+            -p 27017:27017 \
+            mongo:7 --replSet rs0 --bind_ip_all
+          # Wait for mongod to accept connections, then initiate the replset.
+          for i in $(seq 1 30); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})' || true
+          # Wait until the node is a writable primary.
+          for i in $(seq 1 60); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true; then
+              echo "PRIMARY READY"
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true || { echo "NOT PRIMARY"; exit 1; }
 
       - uses: actions/setup-node@v4
         with:
@@ -84,26 +85,29 @@ jobs:
     name: E2E acceptance + a11y (chromium)
     runs-on: ubuntu-latest
     needs: quality
-    services:
-      mongo:
-        image: mongo:7
-        ports: ['27017:27017']
-        options: >-
-          --health-cmd 'mongosh --quiet --eval "db.runCommand({ping:1}).ok"'
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-        env:
-          MONGO_INITDB_DATABASE: eclass-ci
     steps:
       - uses: actions/checkout@v4
 
-      - name: Initiate Mongo replica set
+      - name: Start MongoDB replica set (single node)
         run: |
-          mongosh --quiet "mongodb://localhost:27017/eclass-ci" --eval '
-            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
-            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
-          '
+          docker run -d --name mongo-rs \
+            -p 27017:27017 \
+            mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})' || true
+          for i in $(seq 1 60); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true; then
+              echo "PRIMARY READY"
+              break
+            fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true || { echo "NOT PRIMARY"; exit 1; }
 
       - uses: actions/setup-node@v4
         with:

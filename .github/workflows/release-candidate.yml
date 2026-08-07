@@ -1,10 +1,7 @@
 name: Release candidate
 
-# ECLASS-11 — release gate.
-#
-# Runs only on release tags. The defining requirement: the critical E2E flow
-# (teacher -> student -> review) must pass TWICE, consecutively, against the
-# same build. Second run catches flakiness before release.
+# ECLASS-11 — release gate. Runs only on release tags. The critical E2E flow
+# must pass TWICE, consecutively, against the same build (flakiness gate).
 
 on:
   push:
@@ -12,7 +9,7 @@ on:
 
 env:
   NODE_VERSION: '20'
-  DATABASE_URI: 'mongodb://mongo:27017/eclass-rc?replicaSet=rs0'
+  DATABASE_URL: 'mongodb://127.0.0.1:27017/eclass-rc?replicaSet=rs0&directConnection=true'
   PAYLOAD_SECRET: rc-ephemeral-secret-not-for-prod
   ALLOW_TEST_SEEDING: 'true'
 
@@ -20,26 +17,26 @@ jobs:
   release-e2e-twice:
     name: Critical E2E x2 (release gate)
     runs-on: ubuntu-latest
-    services:
-      mongo:
-        image: mongo:7
-        ports: ['27017:27017']
-        options: >-
-          --health-cmd 'mongosh --quiet --eval "db.runCommand({ping:1}).ok"'
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-        env:
-          MONGO_INITDB_DATABASE: eclass-rc
     steps:
       - uses: actions/checkout@v4
 
-      - name: Initiate Mongo replica set
+      - name: Start MongoDB replica set (single node)
         run: |
-          mongosh --quiet "mongodb://localhost:27017/eclass-rc" --eval '
-            try { rs.status().ok } catch(e) { rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]}) };
-            for (let i=0;i<30;i++){ if(db.runCommand({hello:1}).isWritablePrimary){print("primary ready");break} sleep(500) }
-          '
+          docker run -d --name mongo-rs \
+            -p 27017:27017 \
+            mongo:7 --replSet rs0 --bind_ip_all
+          for i in $(seq 1 30); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1; then break; fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})' || true
+          for i in $(seq 1 60); do
+            if docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true; then
+              echo "PRIMARY READY"; break
+            fi
+            sleep 1
+          done
+          docker exec mongo-rs mongosh --quiet --eval 'db.runCommand({hello:1}).isWritablePrimary' | grep -q true || { echo "NOT PRIMARY"; exit 1; }
 
       - uses: actions/setup-node@v4
         with:

@@ -18,7 +18,7 @@
 ## Быстрый старт
 
 ```bash
-cp .env.example .env             # заполнить DATABASE_URI, PAYLOAD_SECRET
+cp .env.example .env             # заполнить DATABASE_URL, PAYLOAD_SECRET
 npm install
 npm run dev                      # http://localhost:3000
 ```
