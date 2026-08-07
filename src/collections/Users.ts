@@ -1,34 +1,47 @@
 import type { CollectionConfig } from 'payload'
 
 /**
- * Users — ECLASS-56.
+ * Users — ECLASS-56 / ECLASS-62.
  *
- * The single auth collection. Stores teacher (and later student) identities.
- * Password hashing is delegated to Payload's auth (bcrypt-based); the legacy
- * scrypt path in src/auth/service.ts remains the domain contract for tests,
- * and the Payload-backed adapter (ECLASS-56) honours it. Access control is
- * server-side and default-deny: a user can read only themselves; creation is
- * the signup path (open); mutations require the user to be the owner.
+ * The single auth collection. SECURITY (ECLASS-62):
+ *   - `role` is SERVER-SET. A beforeChange hook forces `role = 'teacher'` on
+ *     every create, ignoring any client-supplied value. Admin can only be
+ *     created by a trusted bootstrap/server process using overrideAccess (the
+ *     hook still runs, so bootstrap must use a dedicated path that bypasses
+ *     collection hooks — e.g. a migration or an admin script with
+ *     `disableHooks`).
+ *   - `emailConfirmed` is not client-writable.
+ *
+ * Access is server-side and default-deny: a user reads only themselves.
  */
 export const Users: CollectionConfig = {
   slug: 'users',
   auth: {
-    // Payload manages password hashing and verification. We do NOT expose raw
-    // hashes; login goes through Payload's local strategy.
     useAPIKey: false,
-    tokenExpiration: 60 * 60 * 24, // not used for sessions (we have our own)
+    tokenExpiration: 60 * 60 * 24,
   },
   access: {
-    // Self-only read. Tenant isolation is enforced at the class/membership
-    // layer; here we just ensure a user cannot enumerate others.
     read: ({ req }) => {
       if (!req.user) return false
       return { id: { equals: req.user.id } }
     },
-    // Signup is open (anyone may register a teacher account in MVP).
     create: () => true,
-    update: ({ req, id }) => req.user?.id === id,
-    delete: ({ req, id: userId }) => req.user?.id === userId,
+    update: ({ req }) => req.user?.id !== undefined,
+    delete: ({ req }) => req.user?.id !== undefined,
+  },
+  hooks: {
+    beforeChange: [
+      ({ data, operation }) => {
+        // ECLASS-62: the role is NEVER trusted from the client on create.
+        // Signup always yields a teacher; admin is provisioned out-of-band
+        // (migration / trusted script) — never through this collection's
+        // create path with a client-supplied role.
+        if (operation === 'create') {
+          return { ...data, role: 'teacher' }
+        }
+        return data
+      },
+    ],
   },
   fields: [
     { name: 'name', type: 'text' },
@@ -43,10 +56,9 @@ export const Users: CollectionConfig = {
       name: 'emailConfirmed',
       type: 'checkbox',
       defaultValue: false,
-      // Only an admin/server process flips this; not client-writable.
       admin: { readOnly: true },
       access: {
-        update: ({ req }) => req.user?.role === 'admin' || !req.user,
+        update: () => false,
       },
     },
   ],

@@ -1,32 +1,41 @@
-import type { CollectionConfig } from 'payload'
+import type { CollectionConfig, Where } from 'payload'
 
 /**
- * Memberships — ECLASS-56.
+ * Memberships — ECLASS-56 / ECLASS-62.
  *
- * The roster link between a student and a class. Uniqueness on
- * (classId, studentId) prevents duplicate membership at the DB level — the
- * atomic invite acceptance (ECLASS-57) relies on this unique index to make a
- * duplicate-join a no-op/insert-failure rather than a second row.
+ * Roster link student↔class. SECURITY (ECLASS-62): read access resolves the
+ * caller's scope at query time — a teacher sees only memberships of classes
+ * THEY own (resolved via a Local API lookup of their class ids), and a student
+ * sees only their own membership rows. There is no blanket "teachers read all"
+ * path: the previous `return true` for teachers leaked every membership.
  *
- * Access: a teacher can read the memberships of classes they own; a student
- * can read only their own membership rows (so they can see their class). All
- * mutation goes through server-side invite/move flows, never direct client
- * writes.
+ * Mutation is server-only (invite/move flows); clients never write directly.
  */
 export const Memberships: CollectionConfig = {
   slug: 'memberships',
   access: {
-    read: ({ req }) => {
+    read: async ({ req }): Promise<Where | boolean> => {
       if (!req.user) return false
       if (req.user.role === 'admin') return true
-      if (req.user.role === 'teacher') {
-        // Teachers see memberships for classes they own. The class-ownership
-        // join is enforced at the service layer; here we allow the read and the
-        // service filters by owned classIds.
-        return true
-      }
       if (req.user.role === 'student') return { studentId: { equals: req.user.id } }
-      return false
+      if (req.user.role === 'teacher') {
+        // Resolve the class ids this teacher owns, then constrain memberships
+        // to those classes. Without this join, a bare query would leak every
+        // teacher's rosters. If the teacher owns no classes, return a where
+        // that matches nothing ({ in: [] }) rather than `false`, so a find
+        // yields zero docs instead of throwing Forbidden — the caller is
+        // legitimately allowed to read their (empty) scope.
+        const owned = await req.payload.find({
+          collection: 'classes',
+          where: { ownerId: { equals: req.user.id } },
+          limit: 100,
+          overrideAccess: true,
+          depth: 0,
+        })
+        const classIds = owned.docs.map((c) => c.id)
+        return { classId: { in: classIds } }
+      }
+      return { studentId: { exists: false } }
     },
     create: () => false,
     update: () => false,
@@ -36,7 +45,5 @@ export const Memberships: CollectionConfig = {
     { name: 'classId', type: 'text', required: true },
     { name: 'studentId', type: 'text', required: true },
   ],
-  indexes: [
-    { fields: ['classId', 'studentId'], unique: true },
-  ],
+  indexes: [{ fields: ['classId', 'studentId'], unique: true }],
 }

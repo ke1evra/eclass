@@ -18,6 +18,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
+    // Integration tests that boot Payload against Mongo cannot run in parallel
+    // files — each init builds indexes and acquires intent locks. Run the whole
+    // suite single-threaded so the DB-backed tests are serial and stable.
+    poolOptions: {
+      threads: { singleThread: true },
+      forks: { singleFork: true },
+    },
     include: [
       'src/**/*.test.ts',
       'tests/unit/**/*.test.ts',
