@@ -47,9 +47,12 @@ export const Users: CollectionConfig = {
           return { ...data, role: 'teacher' }
         }
         // On UPDATE, privileged fields are restored from the existing doc so a
-        // client cannot mutate them: role stays, email/password stay (Payload
-        // handles password hashing separately; we freeze the value here).
-        if (operation === 'update' && req.user?.role !== 'admin') {
+        // CLIENT cannot mutate them. A trusted server process (no req.user, or
+        // an admin) is allowed to change role/email — this is the path used by
+        // confirm-email and trusted provisioning. Anything originating from an
+        // authenticated non-admin client has role/email frozen to the existing
+        // values.
+        if (operation === 'update' && req.user && req.user.role !== 'admin') {
           return {
             ...data,
             role: originalDoc.role,
