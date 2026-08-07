@@ -196,19 +196,54 @@ integrationSuite('ECLASS-65: unified auth authority', () => {
     expect(await resolveActor(p, sessionId, clock)).toBeNull()
   })
 
-  it('a transient DB error is RE-THROWN, not masked as anonymous', async () => {
-    // Wrap the real payload so find() throws a non-NotFound error, simulating
-    // a Mongo outage. The resolver must propagate it (5xx), not return null —
-    // otherwise an attacker could DoS the store to widen access.
+  it('a transient DB error in findByID is RE-THROWN, not masked as anonymous', async () => {
+    // The resolver's find() must succeed (a valid session row exists), THEN
+    // findByID throws a NON-404 error simulating a Mongo outage on the users
+    // collection. The resolver must propagate it (5xx) rather than swallow it
+    // as anonymous — masking hides infrastructure failures (it is fail-closed
+    // security-wise, but still wrong operationally).
     const p = await getPayloadSingleton()
+    const user = await p.create({
+      collection: 'users',
+      data: { email: uniqueEmail('boom'), password: 'longpass123', role: 'teacher' },
+      overrideAccess: true,
+    })
+    const sessionId = randomBytes(18).toString('base64url')
+    await p.create({
+      collection: 'sessions',
+      data: { sessionId, userId: user.id, role: 'teacher', expiresAt: clock.now() + HOUR, revoked: false },
+      overrideAccess: true,
+    })
     const boom: Error & { status?: number } = Object.assign(new Error('connection refused'), { status: 503 })
     const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
       get(target, prop) {
-        if (prop === 'find') return async () => Promise.reject(boom)
+        // find() delegates to the real store (returns the valid session);
+        // findByID throws a 503 to simulate a users-collection outage.
+        if (prop === 'findByID') return async () => Promise.reject(boom)
         const value = target[prop as symbol]
         return typeof value === 'function' ? value.bind(p) : value
       },
     })
-    await expect(resolveActor(throwingPayload as never, 'any-opaque-id', clock)).rejects.toThrow(/connection refused/)
+    await expect(resolveActor(throwingPayload as never, sessionId, clock)).rejects.toThrow(/connection refused/)
+  })
+
+  it('a 404 from findByID (deleted user) yields anonymous, not a throw', async () => {
+    // Symmetric to the above: NotFound (404) is the documented "user deleted"
+    // path and MUST become anonymous, not propagate as an error.
+    const p = await getPayloadSingleton()
+    const user = await p.create({
+      collection: 'users',
+      data: { email: uniqueEmail('four04'), password: 'longpass123', role: 'teacher' },
+      overrideAccess: true,
+    })
+    const sessionId = randomBytes(18).toString('base64url')
+    await p.create({
+      collection: 'sessions',
+      data: { sessionId, userId: user.id, role: 'teacher', expiresAt: clock.now() + HOUR, revoked: false },
+      overrideAccess: true,
+    })
+    // Real deletion — findByID genuinely throws NotFound 404.
+    await p.delete({ collection: 'users', id: user.id, overrideAccess: true })
+    expect(await resolveActor(p, sessionId, clock)).toBeNull()
   })
 })

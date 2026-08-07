@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { writeFileSync, readFileSync } from 'node:fs'
+import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
@@ -8,11 +9,11 @@ import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '.
 /**
  * ECLASS-65 — RESTART persistence proof.
  *
- * The reviewer's point: the "new process" claim in the earlier test was just
- * another call on the same Payload singleton — it did not prove persistence
- * across an actual restart. This test writes a session in the main process,
- * then resolves it from a SEPARATE Node child process (tsx) that boots Payload
- * against the same DATABASE_URL. If the session survives, persistence is real.
+ * Writes a session in the main process, then resolves it from a SEPARATE Node
+ * child process (tsx) that boots Payload against the same DATABASE_URL. Each
+ * run uses a UNIQUE temp directory for the session-id file (no fixed path, no
+ * token reuse) and cleans it up in a finally block — no races, no leftover
+ * tokens on disk.
  */
 
 const HOUR = 3_600_000
@@ -36,25 +37,30 @@ integrationSuite('ECLASS-65: resolveActor survives a process restart', () => {
       overrideAccess: true,
     })
 
-    // Hand the session id to a child process via a temp file; the child boots
-    // its own Payload and reports the resolved actor back.
-    const tmp = join(process.cwd(), '.restart-session.txt')
-    writeFileSync(tmp, sessionId)
+    // Unique temp dir per run; the session-id file lives only here and is
+    // removed in finally so no token is left on disk or reused.
+    const dir = mkdtempSync(join(tmpdir(), 'eclass-restart-'))
+    const sessionFile = join(dir, `s-${randomBytes(4).toString('hex')}.txt`)
+    writeFileSync(sessionFile, sessionId, { mode: 0o600 })
     const script = join(process.cwd(), 'scripts', 'restart-resolve.ts')
 
-    const result = spawnSync(
-      process.execPath,
-      [require.resolve('tsx/cli'), script, tmp],
-      {
-        encoding: 'utf-8',
-        env: { ...process.env },
-        timeout: 60_000,
-      },
-    )
-    const out = (result.stdout || '') + (result.stderr || '')
-    expect(result.status, out).toBe(0)
-    // The child prints "RESOLVED <userId> <role>" on success.
-    expect(out).toMatch(/RESOLVED \S+ teacher/)
-    expect(out).toContain(user.id)
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [join('node_modules', 'tsx', 'dist', 'cli.mjs'), script, sessionFile],
+        {
+          encoding: 'utf-8',
+          env: { ...process.env },
+          timeout: 60_000,
+        },
+      )
+      const out = (result.stdout || '') + (result.stderr || '')
+      expect(result.status, out).toBe(0)
+      // The child prints "RESOLVED <userId> <role>" on success.
+      expect(out).toMatch(/RESOLVED \S+ teacher/)
+      expect(out).toContain(user.id)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

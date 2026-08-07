@@ -3,6 +3,10 @@
 /.pnp
 .pnp.js
 
+# test scratch — never commit session tokens / temp fixtures
+/.restart-*
+/.scratch-*
+
 # testing
 /coverage
 /playwright-report
