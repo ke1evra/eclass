@@ -63,6 +63,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Production build
+        run: npm run build
+
       - name: Unit + integration (with coverage gate)
         run: npm test -- --coverage
 

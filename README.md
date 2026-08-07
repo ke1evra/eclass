@@ -30,8 +30,24 @@ npm run dev                      # http://localhost:3000
 | `npm run dev`       | Next.js dev server                                      |
 | `npm run typecheck` | `tsc --noEmit`, строгая проверка типов                  |
 | `npm run lint`      | ESLint (next + typescript + playwright)                 |
+| `npm run build`     | production-сборка (включает lint + typecheck)           |
 | `npm test`          | Vitest — unit/integration слой пирамиды тестов          |
 | `npm run test:e2e`  | Playwright — acceptance/E2E (продуктовый gate)          |
+
+## Обязательный pre-push чек-лист
+
+> CI прогоняет те же шаги, но локальная проверка перед push экономит круг.
+> Ни одно заявление «готово» не делается без вывода этих команд:
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run lint        # 0 errors, 0 warnings
+npm run build       # production-сборка собирается
+npm test --coverage # unit + integration + coverage gate
+npm run test:e2e    # при изменении acceptance/страниц (требует запущенного dev/build сервера)
+```
+
+Все пять — зелёные. Если что-то красное, пушить нельзя.
 
 ## Структура
 

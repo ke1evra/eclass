@@ -1,37 +1,26 @@
 /**
  * Server-side wiring for the student workspace service — ECLASS-16.
  *
- * Returns a service backed by an in-memory store seeded for the P1 skeleton.
- * The real Payload-backed store lands with ECLASS-17 (tenant isolation +
- * auth-контур). Keeping the seam here means the page can render today while
- * the storage layer is swapped without touching the page or the service.
+ * Returns a service backed by an in-memory store. The student identity MUST
+ * come from an authenticated session (CB-4 / ECLASS-51), never from a query
+ * parameter; this file intentionally exposes NO demo seeding on the
+ * production path. Seeding is allowed only under ALLOW_TEST_SEEDING (CI/dev).
+ *
+ * The real Payload-backed store lands with ECLASS-17/51.
  */
-import { createStudentWorkspaceService, type WorkspaceStore } from './service'
+import { createStudentWorkspaceService, type StudentRecord, type WorkspaceStore } from './service'
 
 let cached: ReturnType<typeof createStudentWorkspaceService> | null = null
 
-const seedStore = (): WorkspaceStore => {
-  const students = new Map<string, any>([
-    [
-      'stu-demo',
-      {
-        id: 'stu-demo',
-        classId: 'cls-demo',
-        className: '9А математика',
-        subjectVersionId: 'subj-math-2026',
-        subjectName: 'Математика',
-        examTarget: 'oge' as const,
-        ownerId: 'tea-demo',
-      },
-    ],
-  ])
-  const assignments = new Map<string, any[]>([['stu-demo', []]])
+const buildStore = (): WorkspaceStore => {
+  const students = new Map<string, StudentRecord>()
   return {
     async getStudent(id) {
       return students.get(id)
     },
-    async listAssignments(studentId) {
-      return assignments.get(studentId) ?? []
+    async listAssignments(_studentId) {
+      // Returns StudentAssignment[]; empty until assignments land (ECLASS-23+).
+      return []
     },
     async setDisplayName(id, name) {
       const s = students.get(id)
@@ -40,7 +29,23 @@ const seedStore = (): WorkspaceStore => {
   }
 }
 
+/**
+ * Development/CI-only seed. Gated by ALLOW_TEST_SEEDING and never active in a
+ * production build — `NODE_ENV=production` short-circuits to an empty store.
+ */
+const maybeSeed = (store: WorkspaceStore): void => {
+  if (process.env.NODE_ENV === 'production') return
+  if (process.env.ALLOW_TEST_SEEDING !== 'true') return
+  // Seeding helper reserved for E2E fixtures; no demo student by default so the
+  // production /student path cannot surface fake data.
+  void store
+}
+
 export function getStudentWorkspaceService() {
-  if (!cached) cached = createStudentWorkspaceService({ store: seedStore() })
+  if (!cached) {
+    const store = buildStore()
+    maybeSeed(store)
+    cached = createStudentWorkspaceService({ store })
+  }
   return cached
 }

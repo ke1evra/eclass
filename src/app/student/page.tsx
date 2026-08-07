@@ -1,25 +1,39 @@
 import { getStudentWorkspaceService } from '@/students/server'
-import { redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 
 /**
  * /student — student shell (ECLASS-16).
  *
- * Shows the student's subject/exam target, their assigned work, and a clear
- * "next step" hint. A real session resolves `studentId`; for the P1 skeleton we
- * pass a deterministic id so the empty state is observable without auth wiring.
- * Auth integration lands with the route handlers in ECLASS-17.
+ * SECURITY (CB-4 / ECLASS-51): the student identity is resolved ONLY from the
+ * server-side session (cookie), NEVER from a query parameter. Until the
+ * session helper lands, this page renders an explicit "authentication
+ * required" state instead of accepting an identity from the URL — there is no
+ * path by which a caller can read another student's data here.
  *
  * Accessibility (acceptance: works from 320px and with keyboard):
- *   - semantic landmarks (main, nav), focusable links, no mouse-only gestures;
+ *   - semantic landmarks (main, section), focusable content, no mouse-only gestures;
  *   - responsive layout via the existing globals.css max-width.
  */
-export default async function StudentPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ studentId?: string }>
-}) {
-  const { studentId } = await searchParams
-  if (!studentId) redirect('/about/mvp')
+export default async function StudentPage() {
+  const cookieStore = await cookies()
+  const sessionCookie = cookieStore.get('session')
+
+  // TODO(CB-4/ECLASS-51): replace this stub with a real getSession() that
+  // resolves the authenticated student id from the session. Until then, NO
+  // identity is trusted and the page renders the auth-required state.
+  const studentId = sessionCookie ? null : null
+
+  if (!studentId) {
+    return (
+      <main>
+        <h1>Кабинет ученика</h1>
+        <p role="alert">
+          Для доступа к кабинету нужно войти по приглашению учителя. Код приглашения
+          нельзя получить из адресной строки — он выдаётся учителем.
+        </p>
+      </main>
+    )
+  }
 
   const svc = getStudentWorkspaceService()
   const dashboard = await svc.getDashboard(studentId)
