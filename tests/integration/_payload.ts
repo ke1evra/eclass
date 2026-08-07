@@ -44,17 +44,43 @@ export const integrationSuite = (name: string, fn: () => void) => {
 }
 
 /**
- * Wipe the mutable collections between tests so each test starts clean.
+ * Wipe the mutable collections between tests so each starts clean.
  * Uses overrideAccess (server-level cleanup), never exposed to clients.
+ *
+ * Mongo can throw "Unable to write to collection ... due to catalog changes"
+ * when index builds refresh the catalog mid-write — transient on a freshly
+ * initiated single-node replset (typical in CI). We retry on that specific
+ * error so the test setup is stable.
  */
+const isTransientMongo = (err: unknown): boolean => {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /catalog changes|Unable to write to collection|IX lock|Transaction/i.test(msg)
+}
+
+const withMongoRetry = async <T>(fn: () => Promise<T>, attempts = 5): Promise<T> => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (i === attempts - 1 || !isTransientMongo(err)) throw err
+      await new Promise((r) => setTimeout(r, 150 * (i + 1)))
+    }
+  }
+  throw new Error('unreachable')
+}
+
 export const clearData = async (): Promise<void> => {
   const p = await getPayloadSingleton()
   for (const slug of ['users', 'sessions', 'classes', 'memberships']) {
-    const { docs } = await p.find({ collection: slug, limit: 100, overrideAccess: true })
-    for (const d of docs) {
-      await p.delete({ collection: slug, id: d.id, overrideAccess: true })
-    }
+    await withMongoRetry(async () => {
+      const { docs } = await p.find({ collection: slug, limit: 100, overrideAccess: true })
+      for (const d of docs) {
+        await p.delete({ collection: slug, id: d.id, overrideAccess: true })
+      }
+    })
   }
 }
+
+export { withMongoRetry }
 
 export type { Payload }
