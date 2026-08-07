@@ -8,7 +8,7 @@
   "include": [
     "tests/**/*.ts",
     "src/**/*.test.ts",
-    "scripts/restart-resolve.ts"
+    "src/payload.config.ts"
   ],
-  "exclude": ["node_modules", "tests/acceptance/playwright-generated"]
+  "exclude": ["node_modules"]
 }

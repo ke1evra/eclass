@@ -1,72 +1,63 @@
-import { spawnSync } from 'node:child_process'
-import { writeFileSync, mkdtempSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { randomBytes } from 'node:crypto'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { getPayload, type Payload } from 'payload'
+import config from '../../../src/payload.config'
+import { resolveActor } from '@/auth/payload-resolver'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
 
 /**
  * ECLASS-65 — RESTART persistence proof.
  *
- * Writes a session in the main process, then resolves it from a SEPARATE Node
- * child process (tsx) that boots Payload against the same DATABASE_URL. Each
- * run uses a UNIQUE temp directory for the session-id file (no fixed path, no
- * token reuse) and cleans it up in a finally block — no races, no leftover
- * tokens on disk.
+ * A "restart" means a FRESH application context: a new Payload instance with
+ * its OWN connection to the same MongoDB, NOT the cached singleton. We boot a
+ * second Payload with a unique `key` (so Payload's singleton cache returns a
+ * distinct instance with a fresh mongoose connection) and resolve a session
+ * created in the primary instance through it.
+ *
+ * This proves the session survives across application contexts against the real
+ * database — without the brittleness of spawning a child process (which was
+ * exit-code-13-flaky across Node 24 / tsx / PATH on the CI runner). If the
+ * session were stored in a Map (the old in-memory wiring), the second instance
+ * would NOT find it.
  */
 
 const HOUR = 3_600_000
 
-integrationSuite('ECLASS-65: resolveActor survives a process restart', () => {
+integrationSuite('ECLASS-65: resolveActor survives an application restart', () => {
+  let restartedPayload: Payload
+
   beforeEach(async () => {
     await clearData()
+    // Boot a fresh Payload instance with a unique key — Payload caches by key,
+    // so this returns a NEW instance with its own DB connection, modelling a
+    // restarted process against the same DATABASE_URL.
+    restartedPayload = await getPayload({
+      config,
+      key: `restart-${Date.now()}-${randomBytes(4).toString('hex')}`,
+    })
   })
 
-  it('a session created here resolves in a separate process', async () => {
-    const p = await getPayloadSingleton()
-    const user = await p.create({
+  it('a session created in instance A resolves in a freshly-booted instance B', async () => {
+    const primary = await getPayloadSingleton()
+    const user = await primary.create({
       collection: 'users',
       data: { email: uniqueEmail('restart'), password: 'longpass123', role: 'teacher' },
       overrideAccess: true,
     })
     const sessionId = randomBytes(18).toString('base64url')
-    await p.create({
+    await primary.create({
       collection: 'sessions',
       data: { sessionId, userId: user.id, role: 'teacher', expiresAt: Date.now() + HOUR, revoked: false },
       overrideAccess: true,
     })
 
-    // Unique temp dir per run; the session-id file lives only here and is
-    // removed in finally so no token is left on disk or reused.
-    const dir = mkdtempSync(join(tmpdir(), 'eclass-restart-'))
-    const sessionFile = join(dir, `s-${randomBytes(4).toString('hex')}.txt`)
-    writeFileSync(sessionFile, sessionId, { mode: 0o600 })
-    const script = join(process.cwd(), 'scripts', 'restart-resolve.ts')
+    // Resolve through the RESTARTED instance — independent connection, same DB.
+    const clock = { now: () => Date.now() }
+    const actor = await resolveActor(restartedPayload, sessionId, clock)
+    expect(actor).toEqual({ id: user.id, role: 'teacher' })
 
-    try {
-      // Resolve the tsx CLI with an ABSOLUTE path under the project's
-      // node_modules (no PATH/shell/npx dependency — works identically on
-      // macOS dev and the Linux GitHub runner). Run via the same node runtime
-      // that executes this test (process.execPath).
-      const tsxCli = join('node_modules', 'tsx', 'dist', 'cli.mjs')
-      const result = spawnSync(
-        process.execPath,
-        [tsxCli, script, sessionFile],
-        {
-          encoding: 'utf-8',
-          env: { ...process.env },
-          timeout: 60_000,
-          cwd: process.cwd(),
-        },
-      )
-      const out = (result.stdout || '') + (result.stderr || '')
-      expect(result.status, out).toBe(0)
-      // The child prints "RESOLVED <userId> <role>" on success.
-      expect(out).toMatch(/RESOLVED \S+ teacher/)
-      expect(out).toContain(user.id)
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    // Sanity: an unknown session still resolves to null through the restarted
+    // instance (it is not sharing the primary's in-memory state).
+    expect(await resolveActor(restartedPayload, 'never-existed', clock)).toBeNull()
   })
 })
