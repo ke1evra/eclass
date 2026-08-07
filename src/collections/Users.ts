@@ -86,5 +86,17 @@ export const Users: CollectionConfig = {
         update: ({ req }) => req.user?.role === 'admin',
       },
     },
+    {
+      // ECLASS-65: a blocked user is treated as anonymous by the resolver —
+      // the existing session yields no Actor. Admin/server-only; a user cannot
+      // unblock themselves.
+      name: 'blocked',
+      type: 'checkbox',
+      defaultValue: false,
+      admin: { readOnly: true },
+      access: {
+        update: ({ req }) => !req.user || req.user.role === 'admin',
+      },
+    },
   ],
 }

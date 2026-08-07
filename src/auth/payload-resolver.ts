@@ -9,16 +9,18 @@
  * server-issued opaque id; role/blocked are re-read from the User on every
  * resolution so a role change or block takes effect immediately on the
  * existing session.
+ *
+ * Error handling: a missing cookie, unknown/expired/revoked session, deleted or
+ * blocked user all yield `null` (anonymous). But a transient Mongo/Payload
+ * failure is RE-THROWN — masking infrastructure errors as anonymous would let
+ * an attacker DoS the store to widen access, and would hide real outages.
  */
 import type { Payload } from 'payload'
+import { APIError } from 'payload'
 import type { Actor } from '@/domain/authorization'
 
 export interface Clock {
   now(): number
-}
-
-export interface ResolvedActor {
-  actor: Actor | null
 }
 
 export interface SessionRecord {
@@ -28,10 +30,14 @@ export interface SessionRecord {
   revoked: boolean
 }
 
+const isNotFound = (err: unknown): boolean =>
+  err instanceof APIError && (err as { status?: number }).status === 404
+
 /**
  * Resolve the actor for an incoming request from the opaque session cookie.
  * Returns null (anonymous) when the cookie is absent, the session is unknown /
- * revoked / expired, or the underlying user no longer exists or is blocked.
+ * revoked / expired, the user is deleted or blocked. Re-throws infrastructure
+ * errors (DB down, etc.) so they surface as 5xx, not silent anonymous.
  */
 export async function resolveActor(
   payload: Payload,
@@ -40,7 +46,9 @@ export async function resolveActor(
 ): Promise<Actor | null> {
   if (!cookieValue) return null
 
-  // Look up the opaque session by its id (the cookie value).
+  // Look up the opaque session by its id (the cookie value). A find() that
+  // returns no docs is the "unknown session" anonymous path; an actual DB
+  // error propagates.
   const sessionResult = await payload.find({
     collection: 'sessions',
     where: { sessionId: { equals: cookieValue } },
@@ -54,21 +62,22 @@ export async function resolveActor(
   if (clock.now() >= session.expiresAt) return null
 
   // Re-read the user — role/blocked are the source of truth, never cached in
-  // the session row. findByID throws NotFound when the user has been deleted;
-  // treat that as anonymous (the session is orphaned).
-  let user: { id: string; role: string } | null
+  // the session row. findByID throws NotFound (404 APIError) when the user has
+  // been deleted; that's an anonymous path. Any OTHER error re-throws.
+  let user: { id: string; role: string; blocked?: boolean }
   try {
     user = (await payload.findByID({
       collection: 'users',
       id: session.userId,
       overrideAccess: true,
       depth: 0,
-    })) as { id: string; role: string } | null
-  } catch {
-    return null
+    })) as { id: string; role: string; blocked?: boolean }
+  } catch (err) {
+    if (isNotFound(err)) return null
+    throw err
   }
-  if (!user) return null
+  if (user.blocked) return null
   if (user.role !== 'teacher' && user.role !== 'student') return null
 
-  return { id: user.id, role: user.role }
+  return { id: user.id, role: user.role as Actor['role'] }
 }

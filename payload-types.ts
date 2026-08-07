@@ -130,6 +130,7 @@ export interface User {
   name?: string | null;
   role: 'teacher' | 'student' | 'admin';
   emailConfirmed?: boolean | null;
+  blocked?: boolean | null;
   updatedAt: string;
   createdAt: string;
   email: string;
@@ -277,6 +278,7 @@ export interface UsersSelect<T extends boolean = true> {
   name?: T;
   role?: T;
   emailConfirmed?: T;
+  blocked?: T;
   updatedAt?: T;
   createdAt?: T;
   email?: T;

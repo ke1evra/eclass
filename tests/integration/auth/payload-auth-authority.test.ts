@@ -170,4 +170,45 @@ integrationSuite('ECLASS-65: unified auth authority', () => {
     expect(JSON.stringify(actor)).not.toMatch(/hash|password|salt|scrypt|bcrypt/i)
     expect(JSON.stringify(actor)).not.toContain('longpass123')
   })
+
+  it('a BLOCKED user is treated as anonymous even with a valid session', async () => {
+    const p = await getPayloadSingleton()
+    const user = await p.create({
+      collection: 'users',
+      data: { email: uniqueEmail('block'), password: 'longpass123', role: 'teacher' },
+      overrideAccess: true,
+    })
+    const sessionId = randomBytes(18).toString('base64url')
+    await p.create({
+      collection: 'sessions',
+      data: { sessionId, userId: user.id, role: 'teacher', expiresAt: clock.now() + HOUR, revoked: false },
+      overrideAccess: true,
+    })
+    expect(await resolveActor(p, sessionId, clock)).toEqual({ id: user.id, role: 'teacher' })
+
+    // Trusted server process blocks the user.
+    await p.update({
+      collection: 'users',
+      id: user.id,
+      data: { blocked: true },
+      overrideAccess: true,
+    })
+    expect(await resolveActor(p, sessionId, clock)).toBeNull()
+  })
+
+  it('a transient DB error is RE-THROWN, not masked as anonymous', async () => {
+    // Wrap the real payload so find() throws a non-NotFound error, simulating
+    // a Mongo outage. The resolver must propagate it (5xx), not return null —
+    // otherwise an attacker could DoS the store to widen access.
+    const p = await getPayloadSingleton()
+    const boom: Error & { status?: number } = Object.assign(new Error('connection refused'), { status: 503 })
+    const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
+      get(target, prop) {
+        if (prop === 'find') return async () => Promise.reject(boom)
+        const value = target[prop as symbol]
+        return typeof value === 'function' ? value.bind(p) : value
+      },
+    })
+    await expect(resolveActor(throwingPayload as never, 'any-opaque-id', clock)).rejects.toThrow(/connection refused/)
+  })
 })
