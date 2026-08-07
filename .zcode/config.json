@@ -1,0 +1,13 @@
+{
+  "mcp": {
+    "servers": {
+      "payload-jira": {
+        "type": "http",
+        "url": "https://stakan.script-setup.ru/api/mcp",
+        "headers": {
+          "Authorization": "Bearer 6101cc36-cbaf-4163-aa11-8d4eb12aa607"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
+  "extends": ["next/core-web-vitals", "next/typescript", "prettier"],
+  "plugins": ["@typescript-eslint", "playwright"],
+  "env": { "browser": true, "node": true, "es2022": true },
+  "rules": {
+    "playwright/no-skipped-test": "warn",
+    "playwright/no-focused-test": "error",
+    "@typescript-eslint/no-unused-vars": [
+      "warn",
+      { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }
+    ]
+  },
+  "ignorePatterns": [
+    "node_modules/",
+    ".next/",
+    "next-env.d.ts",
+    "playwright-report/",
+    "test-results/"
+  ]
+}

@@ -1,0 +1,31 @@
+:root {
+  --maxw: 720px;
+  --fg: #0f172a;
+  --muted: #475569;
+  --bg: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html, body { margin: 0; padding: 0; }
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+main {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 2rem 1.25rem 4rem;
+}
+
+h1, h2, h3 { line-height: 1.25; }
+
+ul.needs { padding-left: 1.1rem; }
+ul.needs li { margin: 0.4rem 0; color: var(--muted); }
+
+dl.kpis dt { font-weight: 600; margin-top: 0.6rem; }
+dl.kpis dd { margin: 0 0 0.25rem; color: var(--muted); }
