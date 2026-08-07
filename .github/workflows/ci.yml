@@ -1,0 +1,113 @@
+name: CI
+
+# ECLASS-11 — test pyramid and CI quality gates.
+#
+# Two workflows:
+#   ci.yml  — runs on every push/PR; fast gates: typecheck, lint, unit,
+#             integration. Blocks merge on any failure.
+#   release-candidate.yml — runs on release-tag; adds TWO consecutive E2E
+#             runs of the critical teacher->student->review flow plus a11y.
+#
+# Acceptance criteria covered:
+#   - CI blocks merge on test/lint/typecheck/a11y failure.
+#   - Tests are isolated and deterministic (factories, no production data).
+#   - Critical E2E runs on every release candidate (twice, consecutively).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  # CI must never touch a production database. The job uses an ephemeral
+  # Postgres service container with a throwaway schema.
+  DATABASE_URI: postgresql://eclass:eclass@localhost:5432/eclass_test
+  PAYLOAD_SECRET: ci-ephemeral-secret-not-for-prod
+  ALLOW_TEST_SEEDING: 'true'
+
+jobs:
+  quality:
+    name: typecheck / lint / unit / integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eclass
+          POSTGRES_PASSWORD: eclass
+          POSTGRES_DB: eclass_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U eclass"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit + integration (with coverage gate)
+        run: npm test -- --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+
+  e2e:
+    name: E2E acceptance (chromium)
+    runs-on: ubuntu-latest
+    # E2E is heavier; it still gates PRs but runs after the fast suite.
+    needs: quality
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eclass
+          POSTGRES_PASSWORD: eclass
+          POSTGRES_DB: eclass_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U eclass"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build (production) for stable E2E
+        run: npm run build
+
+      - name: Run acceptance suite
+        run: npm run test:e2e
+        env:
+          CI: 'true'

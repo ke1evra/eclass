@@ -16,7 +16,7 @@
  * `ownerId` (teacher-owned) or `studentId` (student-owned). The policy never
  * trusts client input beyond the actor identity.
  */
-import type { Role, User } from './entities'
+import type { Role } from './entities'
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'submit' | 'review'
 
@@ -33,7 +33,7 @@ export interface OwnedResource {
 }
 
 // Re-export entity types used by callers (single import surface).
-export type { User, Role, ClassEntity, Assignment, Submission, Review, Comment } from './entities'
+export type { Role, ClassEntity, Assignment, Submission, Review, Comment } from './entities'
 
 export type Decision =
   | { allowed: true }

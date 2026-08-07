@@ -1,0 +1,60 @@
+name: Release candidate
+
+# ECLASS-11 — release gate.
+#
+# Runs only on release tags. The defining requirement: the critical E2E flow
+# (teacher -> student -> review) must pass TWICE, consecutively, against the
+# same build. This catches flakiness before a release, not after.
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  NODE_VERSION: '20'
+  DATABASE_URI: postgresql://eclass:eclass@localhost:5432/eclass_test
+  PAYLOAD_SECRET: rc-ephemeral-secret-not-for-prod
+  ALLOW_TEST_SEEDING: 'true'
+
+jobs:
+  release-e2e-twice:
+    name: Critical E2E x2 (release gate)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: eclass
+          POSTGRES_PASSWORD: eclass
+          POSTGRES_DB: eclass_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U eclass"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Critical E2E — run 1 of 2
+        run: npm run test:e2e
+        env:
+          CI: 'true'
+
+      - name: Critical E2E — run 2 of 2 (flakiness gate)
+        run: npm run test:e2e
+        env:
+          CI: 'true'
