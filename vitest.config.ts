@@ -26,7 +26,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
-      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts'],
+      include: ['src/domain/**/*.ts', 'src/api/**/*.ts', 'src/metrics/**/*.ts', 'src/auth/**/*.ts'],
       exclude: ['**/*.test.ts', 'src/payload.config.ts'],
       thresholds: {
         // Critical branches: every lifecycle transition and authorization
