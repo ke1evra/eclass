@@ -3,24 +3,23 @@
  *
  * Runs as a SEPARATE Node process AFTER the seeder has exited. Reads the
  * opaque session id from the temp file (arg 1), boots its OWN Payload against
- * the same DATABASE_URL, and calls resolveActor. This is the real
- * process-restart proof: the seeder process is gone; if the session survives,
- * it lives in the database.
+ * the same DATABASE_URL, and calls resolveActor. The seeder process is gone;
+ * if the session survives, it lives in MongoDB.
  *
- * Usage: node scripts/restart-resolve.mjs <session-file-path> <expected-user-id>
+ * Usage: npx tsx scripts/restart-resolve.ts <session-file-path> <expected-user-id>
  *
  * Prints "RESOLVED <userId> <role>" on success, "ANONYMOUS" if not found.
  * Exits non-zero if the resolved actor does not match the expected user id.
  */
 import { readFileSync } from 'node:fs'
 import { getPayload } from 'payload'
-import config from '../src/payload.config.ts'
-import { resolveActor } from '../src/auth/payload-resolver.ts'
+import config from '../src/payload.config'
+import { resolveActor } from '../src/auth/payload-resolver'
 
 const sessionFile = process.argv[2]
 const expectedUserId = process.argv[3]
 if (!sessionFile || !expectedUserId) {
-  console.error('usage: restart-resolve.mjs <session-file> <expected-user-id>')
+  console.error('usage: restart-resolve.ts <session-file> <expected-user-id>')
   process.exit(2)
 }
 
@@ -36,10 +35,9 @@ if (!actor) {
   process.exit(1)
 }
 console.log(`RESOLVED ${actor.id} ${actor.role}`)
+await payload.destroy()
 if (actor.id !== expectedUserId) {
   console.error(`MISMATCH: expected ${expectedUserId}, got ${actor.id}`)
-  await payload.destroy()
   process.exit(1)
 }
-await payload.destroy()
 process.exit(0)

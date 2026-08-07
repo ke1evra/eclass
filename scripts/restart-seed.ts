@@ -1,32 +1,33 @@
 /**
  * ECLASS-65 cross-process restart proof — STEP 1 (seed).
  *
- * Runs as its OWN Node process. Creates a user + session in MongoDB, writes
- * the opaque session id to a temp file (arg 1), then EXITS. The temp file is
- * the only hand-off to the resolver process; it must have 0600 perms and be
- * cleaned by the caller.
+ * Runs as its OWN Node process (via `npx tsx`). Creates a user + session in
+ * MongoDB, writes the opaque session id to a temp file (arg 1, 0600), then
+ * EXITS. The temp file is the only hand-off to the resolver process.
  *
- * Usage: node scripts/restart-seed.mjs <session-file-path>
+ * SECURITY: prints ONLY the userId (never the session token) — the token goes
+ * exclusively to the temp file, which the CI step cleans via trap.
  *
- * Prints "SEEDED <userId> <sessionId>" on success.
+ * Usage: npx tsx scripts/restart-seed.ts <session-file-path>
+ *
+ * Prints "SEEDED <userId>" on success.
  */
 import { writeFileSync } from 'node:fs'
 import { getPayload } from 'payload'
 import { randomBytes } from 'node:crypto'
-import config from '../src/payload.config.ts'
+import config from '../src/payload.config'
 
 const outFile = process.argv[2]
 if (!outFile) {
-  console.error('usage: restart-seed.mjs <session-file>')
+  console.error('usage: restart-seed.ts <session-file>')
   process.exit(2)
 }
 
 const payload = await getPayload({ config })
 
-// Mongo can throw "Unable to acquire IX lock ... due to catalog changes" right
-// after index creation on a cold DB. Retry the create on that transient error.
-const isTransientMongo = (err) => /catalog changes|IX lock|TransientTransaction/i.test(String(err))
-const withRetry = async (fn, attempts = 6) => {
+const isTransientMongo = (err: unknown): boolean =>
+  /catalog changes|IX lock|TransientTransaction/i.test(String(err))
+const withRetry = async <T>(fn: () => Promise<T>, attempts = 6): Promise<T> => {
   for (let i = 0; i < attempts; i++) {
     try {
       return await fn()
@@ -35,6 +36,7 @@ const withRetry = async (fn, attempts = 6) => {
       await new Promise((r) => setTimeout(r, 200 * (i + 1)))
     }
   }
+  throw new Error('unreachable')
 }
 
 const email = `restart+${Date.now()}-${randomBytes(3).toString('hex')}@eclasstest.ru`
@@ -60,8 +62,8 @@ await withRetry(() =>
   }),
 )
 
-// 0600 — only the owner can read the opaque session id.
 writeFileSync(outFile, sessionId, { mode: 0o600 })
-console.log(`SEEDED ${user.id} ${sessionId}`)
+// Print ONLY the userId — the session token never goes to stdout/logs.
+console.log(`SEEDED ${user.id}`)
 await payload.destroy()
 process.exit(0)

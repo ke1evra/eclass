@@ -8,7 +8,9 @@
   "include": [
     "tests/**/*.ts",
     "src/**/*.test.ts",
-    "src/payload.config.ts"
+    "src/payload.config.ts",
+    "scripts/restart-seed.ts",
+    "scripts/restart-resolve.ts"
   ],
   "exclude": ["node_modules"]
 }

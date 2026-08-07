@@ -77,18 +77,17 @@ jobs:
       - name: Cross-process restart proof (ECLASS-65)
         # The defining restart invariant: seed in process A (which exits), then
         # resolve in a FRESH process B against the same MongoDB. Proves the
-        # session lives in the DB, not in memory. Uses $RUNNER_TEMP (0600 via
-        # the seeder) and cleans up the temp file afterwards.
+        # session lives in the DB, not in memory. Uses a unique mktemp file
+        # (0600 via the seeder) with a trap-based cleanup that runs on ANY exit.
+        # The seeder prints ONLY the userId — the session token never reaches
+        # stdout/logs.
         run: |
-          SESSION_FILE="$RUNNER_TEMP/eclass-restart-session"
-          # Capture only the SEEDED line (npx/payload WARN output would corrupt
-          # the awk parse if we took the whole stream).
-          SEED_LINE=$(npx tsx scripts/restart-seed.mjs "$SESSION_FILE" 2>/dev/null | grep '^SEEDED ' | tail -1)
-          echo "$SEED_LINE"
-          USER_ID=$(echo "$SEED_LINE" | awk '{print $2}')
+          set -euo pipefail
+          SESSION_FILE=$(mktemp "$RUNNER_TEMP/eclass-restart-XXXXXX")
+          trap 'rm -f "$SESSION_FILE"' EXIT
+          USER_ID=$(npx tsx scripts/restart-seed.ts "$SESSION_FILE" 2>/dev/null | grep '^SEEDED ' | awk '{print $2}')
           test -n "$USER_ID" || { echo "no SEEDED line"; exit 1; }
-          npx tsx scripts/restart-resolve.mjs "$SESSION_FILE" "$USER_ID"
-          rm -f "$SESSION_FILE"
+          npx tsx scripts/restart-resolve.ts "$SESSION_FILE" "$USER_ID"
 
       - name: Production dependency audit (0 high/critical)
         run: npm audit --omit=dev --audit-level=high
