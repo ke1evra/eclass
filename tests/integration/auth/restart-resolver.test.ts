@@ -45,14 +45,19 @@ integrationSuite('ECLASS-65: resolveActor survives a process restart', () => {
     const script = join(process.cwd(), 'scripts', 'restart-resolve.ts')
 
     try {
+      // Resolve the tsx CLI with an ABSOLUTE path under the project's
+      // node_modules (no PATH/shell/npx dependency — works identically on
+      // macOS dev and the Linux GitHub runner). Run via the same node runtime
+      // that executes this test (process.execPath).
+      const tsxCli = join('node_modules', 'tsx', 'dist', 'cli.mjs')
       const result = spawnSync(
-        'npx',
-        ['tsx', script, sessionFile],
+        process.execPath,
+        [tsxCli, script, sessionFile],
         {
           encoding: 'utf-8',
           env: { ...process.env },
           timeout: 60_000,
-          shell: process.platform === 'win32',
+          cwd: process.cwd(),
         },
       )
       const out = (result.stdout || '') + (result.stderr || '')
