@@ -49,6 +49,17 @@ npm run test:e2e    # при изменении acceptance/страниц (тр�
 
 Все пять — зелёные. Если что-то красное, пушить нельзя.
 
+## Зависимости и аудит
+
+- `.npmrc` содержит `legacy-peer-deps=true`: Payload 3.87 объявляет peer-dep
+  Next `<15.5.0`, но реально работает с 15.5.x. Без этого флага npm拒绝 установку.
+  Это зафиксированное решение (CB-8), пересматривается при bump Payload.
+- `overrides` в `package.json` форсят актуальные postcss/sharp/dompurify,
+  закрывая XSS/path-traversal advisories.
+- Целевое состояние аудита: **0 high, 0 critical**. Остаточные moderate —
+  транзитивные через `@payloadcms/db-postgres` → `drizzle-kit` (dev-инструмент
+  Payload), ждут upstream-обновления и не входят в runtime-поверхность.
+
 ## Структура
 
 ```
