@@ -1,29 +1,27 @@
 import { getStudentWorkspaceService } from '@/students/server'
+import { getSessionResolver, SESSION_COOKIE } from '@/auth/server'
 import { cookies } from 'next/headers'
 
 /**
- * /student — student shell (ECLASS-16).
+ * /student — student shell (ECLASS-16, fixed in CB-4 / ECLASS-51).
  *
- * SECURITY (CB-4 / ECLASS-51): the student identity is resolved ONLY from the
- * server-side session (cookie), NEVER from a query parameter. Until the
- * session helper lands, this page renders an explicit "authentication
- * required" state instead of accepting an identity from the URL — there is no
- * path by which a caller can read another student's data here.
+ * SECURITY: the student identity is resolved ONLY from the server-side session
+ * cookie via the session resolver. There is NO path by which a caller can
+ * supply an identity through the URL — the page takes no params and trusts
+ * nothing but the cookie. A missing/invalid session renders the auth-required
+ * state; it never falls back to a default or demo identity.
  *
- * Accessibility (acceptance: works from 320px and with keyboard):
- *   - semantic landmarks (main, section), focusable content, no mouse-only gestures;
- *   - responsive layout via the existing globals.css max-width.
+ * Accessibility: semantic landmarks, focusable content, responsive layout
+ * (works from 320px), no mouse-only gestures.
  */
 export default async function StudentPage() {
   const cookieStore = await cookies()
-  const sessionCookie = cookieStore.get('session')
+  const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+  const actor = await getSessionResolver().resolveSession(sessionId)
 
-  // TODO(CB-4/ECLASS-51): replace this stub with a real getSession() that
-  // resolves the authenticated student id from the session. Until then, NO
-  // identity is trusted and the page renders the auth-required state.
-  const studentId = sessionCookie ? null : null
-
-  if (!studentId) {
+  // No authenticated student actor → auth-required state. We never read or
+  // infer an identity from anywhere else.
+  if (!actor || actor.role !== 'student') {
     return (
       <main>
         <h1>Кабинет ученика</h1>
@@ -36,7 +34,7 @@ export default async function StudentPage() {
   }
 
   const svc = getStudentWorkspaceService()
-  const dashboard = await svc.getDashboard(studentId)
+  const dashboard = await svc.getDashboard(actor.id)
   if (!dashboard.ok) {
     return (
       <main>
