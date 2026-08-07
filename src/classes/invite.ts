@@ -44,6 +44,7 @@ export type InviteResult<T> = ({ ok: true } & T) | { ok: false; code: InviteErro
 
 export type InviteErrorCode =
   | 'not_found'
+  | 'forbidden'
   | 'invite_invalid'
   | 'invite_expired'
   | 'invite_revoked'
@@ -72,16 +73,21 @@ export function createInviteService(opts: Options) {
   const { store, clock, ttlMs } = opts
 
   return {
-    async createInvite(ownerId: string, classId: string): Promise<InviteResult<{ code: string; expiresAt: number }>> {
+    async createInvite(
+      actor: { id: string; role: string },
+      classId: string,
+    ): Promise<InviteResult<{ code: string; expiresAt: number }>> {
+      // Only a teacher may mint invites. A student actor is refused outright.
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
       const realOwner = await store.getClassOwner(classId)
-      if (realOwner !== ownerId) return { ok: false, code: 'not_found' }
+      if (realOwner !== actor.id) return { ok: false, code: 'not_found' }
 
       const now = clock.now()
       const code = generateCode()
       await store.insertInvite({
         code,
         classId,
-        ownerId,
+        ownerId: actor.id,
         createdAt: now,
         expiresAt: now + ttlMs,
         revoked: false,
@@ -107,9 +113,13 @@ export function createInviteService(opts: Options) {
       return { ok: true, classId: inv.classId, studentId: input.studentId }
     },
 
-    async revoke(ownerId: string, code: string): Promise<InviteResult<{ revoked: true }>> {
+    async revoke(
+      actor: { id: string; role: string },
+      code: string,
+    ): Promise<InviteResult<{ revoked: true }>> {
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
       const inv = await store.getInvite(code)
-      if (!inv || inv.ownerId !== ownerId) return { ok: false, code: 'not_found' }
+      if (!inv || inv.ownerId !== actor.id) return { ok: false, code: 'not_found' }
       await store.revokeInvite(code)
       return { ok: true, revoked: true }
     },

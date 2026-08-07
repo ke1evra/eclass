@@ -192,55 +192,80 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
 
   describe('IDOR — cross-tenant resource access is blocked', () => {
     it('teacher B cannot read or mutate teacher A’s class', async () => {
-      const a = await h.classes.createClass({ ownerId: 'tea-a', name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
       if (!a.ok) throw new Error('setup')
-      const read = await h.classes.getClass('tea-b', a.class.id)
+      const read = await h.classes.getClass({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(read.ok).toBe(false)
-      const rename = await h.classes.renameClass('tea-b', a.class.id, 'hacked')
+      const rename = await h.classes.renameClass({ id: 'tea-b', role: 'teacher' }, a.class.id, 'hacked')
       expect(rename.ok).toBe(false)
-      const archive = await h.classes.archiveClass('tea-b', a.class.id)
+      const archive = await h.classes.archiveClass({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(archive.ok).toBe(false)
-      const roster = await h.classes.getRoster('tea-b', a.class.id)
+      const roster = await h.classes.getRoster({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(roster.ok).toBe(false)
     })
 
     it('teacher B cannot add a student to teacher A’s class', async () => {
-      const a = await h.classes.createClass({ ownerId: 'tea-a', name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
       if (!a.ok) throw new Error('setup')
-      const add = await h.classes.addStudent('tea-b', a.class.id, 'stu-x')
+      const add = await h.classes.addStudent({ id: 'tea-b', role: 'teacher' }, a.class.id, 'stu-x')
       expect(add.ok).toBe(false)
       if (!add.ok) expect(add.code).toBe('not_found')
     })
 
     it('teacher B cannot create an invite for teacher A’s class', async () => {
-      const a = await h.classes.createClass({ ownerId: 'tea-a', name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
       if (!a.ok) throw new Error('setup')
-      const inv = await h.invites.createInvite('tea-b', a.class.id)
+      const inv = await h.invites.createInvite({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(inv.ok).toBe(false)
       if (!inv.ok) expect(inv.code).toBe('not_found')
     })
   })
 
   describe('role escalation — students cannot act as teachers', () => {
-    it('a student cannot create or rename a class', async () => {
-      // The class service is owner-scoped; a student id simply never owns a class.
-      const created = await h.classes.createClass({ ownerId: 'stu-1', name: 'x', subjectVersionId: 's' })
-      // Creating a class owned by yourself is allowed by the service contract,
-      // but the domain policy forbids a student from the 'create' action on a class.
-      // We assert the domain policy directly here:
-      const { authorize } = await import('@/domain/authorization')
-      const decision = authorize({ id: 'stu-1', role: 'student' }, 'create', { ownerId: 'stu-1' })
-      expect(decision.allowed).toBe(false)
-      // Cleanup not needed; the created class is harmless and student-owned in this toy store.
+    it('a student actor is refused by createClass on the REAL service path', async () => {
+      // CB-3: this previously asserted authorize() in isolation while createClass
+      // accepted a bare ownerId and returned ok. Now the service must take an
+      // Actor and refuse a student on the real path.
+      const created = await h.classes.createClass({
+        actor: { id: 'stu-1', role: 'student' },
+        name: 'x',
+        subjectVersionId: 's',
+      })
+      expect(created.ok).toBe(false)
+      if (!created.ok) expect(created.code).toBe('forbidden')
+    })
+
+    it('a teacher actor CAN create a class', async () => {
+      const created = await h.classes.createClass({
+        actor: { id: 'tea-1', role: 'teacher' },
+        name: 'x',
+        subjectVersionId: 's',
+      })
       expect(created.ok).toBe(true)
+    })
+
+    it('a student actor cannot rename/archive/mutate a class', async () => {
+      const created = await h.classes.createClass({
+        actor: { id: 'tea-1', role: 'teacher' },
+        name: 'a',
+        subjectVersionId: 's',
+      })
+      if (!created.ok) throw new Error('setup')
+      const rename = await h.classes.renameClass(
+        { id: 'stu-1', role: 'student' },
+        created.class.id,
+        'hacked',
+      )
+      expect(rename.ok).toBe(false)
+      if (!rename.ok) expect(rename.code).toBe('forbidden')
     })
   })
 
   describe('invite replay protection', () => {
     it('a used invite cannot join a second student', async () => {
-      const a = await h.classes.createClass({ ownerId: 'tea-a', name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
       if (!a.ok) throw new Error('setup')
-      const inv = await h.invites.createInvite('tea-a', a.class.id)
+      const inv = await h.invites.createInvite({ id: 'tea-a', role: 'teacher' }, a.class.id)
       if (!inv.ok) throw new Error('invite')
 
       const first = await h.invites.join({ code: inv.code, studentId: 'stu-1' })

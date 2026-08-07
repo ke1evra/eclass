@@ -1,14 +1,17 @@
 /**
- * Class & roster service — ECLASS-14 (TDD-P1-02).
+ * Class & roster service — ECLASS-14, fixed in CB-3 (ECLASS-50).
  *
  * Wraps the class aggregate (a ClassEntity + its roster) behind a service
- * that enforces ownership via the domain authorization policy. Storage is
- * injected (`ClassStore`) so tests run in-memory and production swaps in
- * Payload. Soft-archiving preserves history: archived classes are hidden from
- * the default list but their assignments/submissions remain queryable.
+ * that enforces authorization via the domain policy. Storage is injected
+ * (`ClassStore`) so tests run in-memory and production swaps in Payload.
+ *
+ * SECURITY (CB-3): every method takes an `Actor` ({ id, role }) — never a bare
+ * ownerId. `createClass` refuses a non-teacher actor with `forbidden` on the
+ * real path. This closes the role-escalation hole where a student could create
+ * a class by passing their id as ownerId.
  */
 import { randomBytes } from 'node:crypto'
-import { authorize, type Decision } from '@/domain/authorization'
+import { authorize, type Actor, type Decision } from '@/domain/authorization'
 import type { ClassEntity } from '@/domain/entities'
 
 export interface StoredClass extends Omit<ClassEntity, 'inviteCode'> {
@@ -32,38 +35,41 @@ interface Options {
   store: ClassStore
 }
 
-const teacher = (id: string) => ({ id, role: 'teacher' as const })
-
-const guard = (actorId: string, action: Parameters<typeof authorize>[1], resource: { ownerId?: string }): Decision =>
-  authorize(teacher(actorId), action, resource)
+const guard = (actor: Actor, action: Parameters<typeof authorize>[1], resource: { ownerId?: string }): Decision =>
+  authorize(actor, action, resource)
 
 export function createClassService(opts: Options) {
   const { store } = opts
 
   /** Ensure the class exists AND is owned by the actor; else not_found. */
   const ownOrFail = async (
-    actorId: string,
+    actor: Actor,
     classId: string,
   ): Promise<ClassResult<{ cls: StoredClass }>> => {
     const cls = await store.getClass(classId)
     if (!cls) return { ok: false, code: 'not_found' }
-    const d = guard(actorId, 'read', { ownerId: cls.ownerId })
+    const d = guard(actor, 'read', { ownerId: cls.ownerId })
     if (!d.allowed) return { ok: false, code: 'not_found' }
     return { ok: true, cls }
   }
 
   return {
     async createClass(input: {
-      ownerId: string
+      actor: Actor
       name: string
       subjectVersionId: string
     }): Promise<ClassResult<{ class: StoredClass }>> {
+      // Role gate FIRST: only a teacher may create a class. This runs before
+      // any ownership reasoning so a student actor is refused outright.
+      const createDecision = guard(input.actor, 'create', { ownerId: input.actor.id })
+      if (!createDecision.allowed) return { ok: false, code: 'forbidden' }
+
       if (!input.name.trim() || !input.subjectVersionId) {
         return { ok: false, code: 'validation_error' }
       }
       const cls: StoredClass = {
         id: `cls-${randomBytes(6).toString('hex')}`,
-        ownerId: input.ownerId,
+        ownerId: input.actor.id,
         subjectVersionId: input.subjectVersionId,
         name: input.name,
         archivedAt: null,
@@ -73,24 +79,25 @@ export function createClassService(opts: Options) {
     },
 
     async renameClass(
-      actorId: string,
+      actor: Actor,
       classId: string,
       name: string,
     ): Promise<ClassResult<{ class: StoredClass }>> {
-      const owned = await ownOrFail(actorId, classId)
+      // Role gate first: a student attempting a teacher-only mutation is
+      // 'forbidden' regardless of ownership — this is a role mismatch, not a
+      // cross-tenant probe, so we don't hide existence from them.
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
       if (!name.trim()) return { ok: false, code: 'validation_error' }
-      const d = guard(actorId, 'update', { ownerId: owned.cls.ownerId })
-      if (!d.allowed) return { ok: false, code: 'not_found' }
       await store.updateClass(classId, { name })
       return { ok: true, class: { ...owned.cls, name } }
     },
 
-    async archiveClass(actorId: string, classId: string): Promise<ClassResult<{ class: StoredClass }>> {
-      const owned = await ownOrFail(actorId, classId)
+    async archiveClass(actor: Actor, classId: string): Promise<ClassResult<{ class: StoredClass }>> {
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
-      const d = guard(actorId, 'delete', { ownerId: owned.cls.ownerId })
-      if (!d.allowed) return { ok: false, code: 'not_found' }
       const archivedAt = Date.now()
       await store.updateClass(classId, { archivedAt })
       return { ok: true, class: { ...owned.cls, archivedAt } }
@@ -103,21 +110,20 @@ export function createClassService(opts: Options) {
       return store.listClasses(ownerId, opts)
     },
 
-    async getClass(actorId: string, classId: string): Promise<ClassResult<{ class: StoredClass }>> {
-      const owned = await ownOrFail(actorId, classId)
+    async getClass(actor: Actor, classId: string): Promise<ClassResult<{ class: StoredClass }>> {
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
       return { ok: true, class: owned.cls }
     },
 
     async addStudent(
-      actorId: string,
+      actor: Actor,
       classId: string,
       studentId: string,
     ): Promise<ClassResult<{ added: boolean }>> {
-      const owned = await ownOrFail(actorId, classId)
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
-      const d = guard(actorId, 'update', { ownerId: owned.cls.ownerId })
-      if (!d.allowed) return { ok: false, code: 'not_found' }
       const already = await store.isMember(classId, studentId)
       if (already) return { ok: false, code: 'conflict' }
       await store.addStudent(classId, studentId)
@@ -125,31 +131,29 @@ export function createClassService(opts: Options) {
     },
 
     async removeStudent(
-      actorId: string,
+      actor: Actor,
       classId: string,
       studentId: string,
     ): Promise<ClassResult<{ removed: boolean }>> {
-      const owned = await ownOrFail(actorId, classId)
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
-      const d = guard(actorId, 'update', { ownerId: owned.cls.ownerId })
-      if (!d.allowed) return { ok: false, code: 'not_found' }
       await store.removeStudent(classId, studentId)
       return { ok: true, removed: true }
     },
 
     async moveStudent(
-      actorId: string,
+      actor: Actor,
       studentId: string,
       fromClassId: string,
       toClassId: string,
     ): Promise<ClassResult<{ moved: boolean }>> {
-      // Both classes must be owned by the same teacher (no cross-tenant move).
-      const from = await ownOrFail(actorId, fromClassId)
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const from = await ownOrFail(actor, fromClassId)
       if (!from.ok) return from
-      const to = await ownOrFail(actorId, toClassId)
+      const to = await ownOrFail(actor, toClassId)
       if (!to.ok) return to
       await store.removeStudent(fromClassId, studentId)
-      // Avoid duplicate if already in target (idempotent move).
       if (!(await store.isMember(toClassId, studentId))) {
         await store.addStudent(toClassId, studentId)
       }
@@ -157,10 +161,11 @@ export function createClassService(opts: Options) {
     },
 
     async getRoster(
-      actorId: string,
+      actor: Actor,
       classId: string,
     ): Promise<ClassResult<{ studentIds: string[] }>> {
-      const owned = await ownOrFail(actorId, classId)
+      if (actor.role !== 'teacher') return { ok: false, code: 'forbidden' }
+      const owned = await ownOrFail(actor, classId)
       if (!owned.ok) return owned
       const studentIds = await store.getRoster(classId)
       return { ok: true, studentIds }

@@ -56,7 +56,7 @@ describe('invite service — ECLASS-15', () => {
 
   describe('code generation', () => {
     it('creates an invite with a short, opaque code for an owned class', async () => {
-      const res = await svc.createInvite('tea-1', 'cls-1')
+      const res = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       expect(res.ok).toBe(true)
       if (res.ok) {
         expect(res.code).toMatch(/^[A-Z0-9]{6,12}$/)
@@ -68,7 +68,7 @@ describe('invite service — ECLASS-15', () => {
 
     it('the code does not encode the class id or teacher id', async () => {
       for (let i = 0; i < 20; i++) {
-        const res = await svc.createInvite('tea-1', 'cls-1')
+        const res = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
         if (res.ok) {
           expect(res.code).not.toMatch(/cls/i)
           expect(res.code).not.toMatch(/tea/i)
@@ -78,7 +78,7 @@ describe('invite service — ECLASS-15', () => {
     })
 
     it('a teacher cannot create an invite for a class they do not own', async () => {
-      const res = await svc.createInvite('tea-other', 'cls-1')
+      const res = await svc.createInvite({ id: 'tea-other', role: 'teacher' }, 'cls-1')
       expect(res.ok).toBe(false)
       if (!res.ok) expect(res.code).toBe('not_found')
     })
@@ -86,7 +86,7 @@ describe('invite service — ECLASS-15', () => {
 
   describe('join flow', () => {
     it('a student joins a class with a valid code and is added to the roster', async () => {
-      const inv = await svc.createInvite('tea-1', 'cls-1')
+      const inv = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
       const join = await svc.join({ code: inv.code, studentId: 'stu-1' })
       expect(join.ok).toBe(true)
@@ -97,7 +97,7 @@ describe('invite service — ECLASS-15', () => {
     })
 
     it('a used invite cannot be reused (single-use by default)', async () => {
-      const inv = await svc.createInvite('tea-1', 'cls-1')
+      const inv = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
       await svc.join({ code: inv.code, studentId: 'stu-1' })
       const reuse = await svc.join({ code: inv.code, studentId: 'stu-2' })
@@ -106,11 +106,11 @@ describe('invite service — ECLASS-15', () => {
     })
 
     it('an already-member student gets a clear conflict, not a duplicate', async () => {
-      const inv = await svc.createInvite('tea-1', 'cls-1')
+      const inv = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
       await svc.join({ code: inv.code, studentId: 'stu-1' })
       // Re-join the same class via a fresh invite.
-      const inv2 = await svc.createInvite('tea-1', 'cls-1')
+      const inv2 = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv2.ok) throw new Error('setup2')
       const dup = await svc.join({ code: inv2.code, studentId: 'stu-1' })
       expect(dup.ok).toBe(false)
@@ -123,7 +123,7 @@ describe('invite service — ECLASS-15', () => {
       // Shared store so the invite survives across the time advance.
       const store = makeStore()
       const short = createInviteService({ store, clock, ttlMs: 1 })
-      const inv = await short.createInvite('tea-1', 'cls-1')
+      const inv = await short.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
       const laterClock: Clock = { now: () => fixedNow + 10_000 }
       const later = createInviteService({ store, clock: laterClock, ttlMs: 1 })
@@ -133,18 +133,18 @@ describe('invite service — ECLASS-15', () => {
     })
 
     it('a revoked invite cannot be used', async () => {
-      const inv = await svc.createInvite('tea-1', 'cls-1')
+      const inv = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
-      await svc.revoke('tea-1', inv.code)
+      await svc.revoke({ id: 'tea-1', role: 'teacher' }, inv.code)
       const join = await svc.join({ code: inv.code, studentId: 'stu-1' })
       expect(join.ok).toBe(false)
       if (!join.ok) expect(join.code).toBe('invite_revoked')
     })
 
     it('only the class owner can revoke an invite', async () => {
-      const inv = await svc.createInvite('tea-1', 'cls-1')
+      const inv = await svc.createInvite({ id: 'tea-1', role: 'teacher' }, 'cls-1')
       if (!inv.ok) throw new Error('setup')
-      const revoke = await svc.revoke('tea-other', inv.code)
+      const revoke = await svc.revoke({ id: 'tea-other', role: 'teacher' }, inv.code)
       expect(revoke.ok).toBe(false)
       if (!revoke.ok) expect(revoke.code).toBe('not_found')
     })
