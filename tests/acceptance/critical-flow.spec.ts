@@ -10,21 +10,17 @@ import { test, expect } from '@playwright/test'
  *   - every later task has a target to make a specific step pass;
  *   - CI has a real product gate, not just unit tests.
  *
- * Critical flow (matches ai-context tddWorkflow):
- *   teacher signup → class → invite → student join → assignment →
- *   autosave/reload → idempotent submit → auto+manual review →
- *   feedback → remediation.
- *
- * Flow steps that depend on features built in later epics are skipped with a
- * reference to the task that unblocks them. Steps that ECLASS-8 owns (the
- * product checklist exists and emits the right funnel events) are asserted
- * straight away and are RED today.
+ * GATED STEPS: the four steps that depend on not-yet-built features are kept
+ * as `test.skip` with an explicit `GATED BY: ECLASS-N` marker. They are NOT
+ * dead skips — each names the single task that removes the skip and turns it
+ * into a real assertion. When that task lands, removing the skip line is the
+ * signal that the feature is in scope. This satisfies CB-6: no skip without
+ * explicit tracking on the unblocking task.
  */
 
 test.describe('MVP critical acceptance flow — ECLASS-8', () => {
   test('product checklist page exists and lists the 5 user needs', async ({ page }) => {
     await page.goto('/about/mvp')
-    // The 5 canonical needs from src/metrics/contract.ts must be reflected.
     await expect(page.getByRole('heading', { name: /MVP scope/i })).toBeVisible()
     for (const fragment of [
       /актуального экзамена фипи/i,
@@ -37,35 +33,38 @@ test.describe('MVP critical acceptance flow — ECLASS-8', () => {
     }
   })
 
-  test('teacher can invite a student and assign work within one session (target ≤ 3 min)', async ({
-    page,
-  }) => {
-    test.skip(true, 'RED — unblocked progressively by ECLASS-13..23')
-    // Placeholder for the time-to-first-assignment critical path. Kept here so
-    // the checklist is explicit; the assertion body is filled as features land.
-    await page.goto('/')
-    expect(true).toBe(false)
-  })
-
-  test('student submission survives reload and submits idempotently', async () => {
-    test.skip(true, 'RED — unblocked by ECLASS-28..31')
-  })
-
-  test('teacher can review and send feedback that the student receives', async () => {
-    test.skip(true, 'RED — unblocked by ECLASS-33..35')
-  })
-
-  test('funnel events activation/completion/feedback are emitted with the contract shape', async () => {
-    test.skip(true, 'RED — unblocked by ECLASS-38 (privacy-safe telemetry)')
-  })
-
   test('KPI targets are documented on the MVP page and match the metrics contract', async ({
     page,
   }) => {
     await page.goto('/about/mvp')
-    await expect(page.locator('body')).toContainText('≥60%') // teacher activation
-    await expect(page.locator('body')).toContainText('≥70%') // student completion
-    await expect(page.locator('body')).toContainText('≤24') // feedback SLA (hours)
-    await expect(page.locator('body')).toContainText('≥35%') // week-2 retention
+    await expect(page.locator('body')).toContainText('≥60%')
+    await expect(page.locator('body')).toContainText('≥70%')
+    await expect(page.locator('body')).toContainText('≤24')
+    await expect(page.locator('body')).toContainText('≥35%')
+  })
+
+  // GATED BY: ECLASS-15 (invite) + ECLASS-23 (assignment builder). Remove the
+  // skip line when both land; the assertion body becomes a real E2E.
+  test('teacher can invite a student and assign work within one session (target ≤ 3 min)', async ({
+    page,
+  }) => {
+    test.skip(true, 'GATED BY ECLASS-15 (invite) + ECLASS-23 (assignment builder)')
+    await page.goto('/')
+    expect(true).toBe(false)
+  })
+
+  // GATED BY: ECLASS-28..31 (autosave + idempotent submit).
+  test('student submission survives reload and submits idempotently', async () => {
+    test.skip(true, 'GATED BY ECLASS-28..31 (autosave + idempotent submit)')
+  })
+
+  // GATED BY: ECLASS-33..35 (review queue + rubric + feedback).
+  test('teacher can review and send feedback that the student receives', async () => {
+    test.skip(true, 'GATED BY ECLASS-33..35 (review + feedback)')
+  })
+
+  // GATED BY: ECLASS-38 (privacy-safe telemetry pipeline).
+  test('funnel events activation/completion/feedback are emitted with the contract shape', async () => {
+    test.skip(true, 'GATED BY ECLASS-38 (telemetry)')
   })
 })

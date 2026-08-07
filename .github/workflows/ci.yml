@@ -110,7 +110,7 @@ jobs:
       - name: Build (production) for stable E2E
         run: npm run build
 
-      - name: Run acceptance suite
+      - name: Run acceptance suite (E2E + a11y)
         run: npm run test:e2e
         env:
           CI: 'true'
