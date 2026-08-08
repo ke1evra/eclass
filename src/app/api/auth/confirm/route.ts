@@ -1,46 +1,47 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import config from '@/payload.config'
+import { createEmailConfirm } from '@/auth/email-confirm'
+import { getEmailTransport } from '@/email/transport'
 
 /**
- * POST /api/auth/confirm — ECLASS-65 block 2 (STUB).
+ * POST /api/auth/confirm — ECLASS-67.
  *
- * ⚠ INSECURE STUB: confirms email by { userId } with NO token. Any caller who
- * knows a userId can flip that user's `emailConfirmed` to true. This exists
- * solely so the `signup → confirm → login` flow is exercisable through real
- * route handlers (audit requirement, ECLASS-65). It MUST NOT ship to a
- * production-facing environment as-is.
+ * Real token-hash flow. Accepts `{ token }` (the raw bearer token delivered
+ * out-of-band via email); verifies it atomically against the stored SHA-256
+ * hash + non-expiry + not-yet-confirmed, flips `emailConfirmed` to true and
+ * single-use-invalidates the token by clearing its hash.
  *
- * TODO(ECLASS-NN, real email-token flow):
- *   - add `emailConfirmationToken` field to Users, generated at signup;
- *   - this handler verifies the token, sets emailConfirmed=true, and
- *     single-use-invalidates the token;
- *   - signup sends the confirmation link via email (out-of-band).
+ * Anti-enumeration: every failure (wrong token, expired, already used,
+ * unknown) collapses to the identical `{ ok: false, code: 'invalid_or_expired' }`
+ * body + 400 — no signal leaks about whether the email exists.
  *
- * `emailConfirmed` has admin-only field-level update access (Users.ts); the
- * beforeChange hook permits the change on the trusted server path (no
- * req.user), so the update goes through with overrideAccess: true.
+ * Infrastructure errors surface as 503 (not masked as invalid), mirroring the
+ * login handler's error taxonomy.
  */
+const CONFIRM_TOKEN_TTL_MS = 24 * 60 * 60 * 1000 // 24h
+
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as { userId?: string } | null
-  if (!body?.userId) {
+  const body = (await req.json().catch(() => null)) as { token?: string } | null
+  if (!body?.token) {
     return NextResponse.json({ ok: false, code: 'validation_error' }, { status: 422 })
   }
 
   const payload = await getPayload({ config })
+  const emailConfirm = createEmailConfirm({
+    payload,
+    transport: getEmailTransport(), // unused by confirm() but required by the factory signature
+    clock: { now: () => Date.now() },
+    ttlMs: CONFIRM_TOKEN_TTL_MS,
+  })
+
   try {
-    await payload.update({
-      collection: 'users',
-      id: body.userId,
-      data: { emailConfirmed: true },
-      overrideAccess: true,
-    })
-    return NextResponse.json({ ok: true })
-  } catch (err) {
-    const status = (err as { status?: number })?.status
-    if (status === 404) {
-      return NextResponse.json({ ok: false, code: 'not_found' }, { status: 404 })
+    const result = await emailConfirm.confirm(body.token)
+    if (result === 'ok') {
+      return NextResponse.json({ ok: true })
     }
+    return NextResponse.json({ ok: false, code: 'invalid_or_expired' }, { status: 400 })
+  } catch {
     return NextResponse.json({ ok: false, code: 'error' }, { status: 503 })
   }
 }
