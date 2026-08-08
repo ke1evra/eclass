@@ -74,58 +74,15 @@ jobs:
       - name: Unit + integration (with coverage gate)
         run: npm test -- --coverage
 
-      - name: Cross-process restart proof (ECLASS-65)
-        # The defining restart invariant: seed in process A (which exits), then
-        # resolve in a FRESH process B against the same MongoDB. Proves the
-        # session lives in the DB, not in memory. Uses a unique mktemp file
-        # (0600 via the seeder) with a trap-based cleanup that runs on ANY exit.
-        # The seeder prints ONLY the userId — the session token never reaches
-        # stdout/logs.
-        #
-        # The seed output (stdout+stderr) is written DIRECTLY to a log file —
-        # never tee'd raw into the GitHub Actions log. On failure, the file is
-        # printed only AFTER scrubbing any long base64url-looking run, so a
-        # future change that accidentally leaks a token cannot reach the logs.
-        # Retry is gated on a CLASSIFIED transient Mongo error
-        # (E11000/WriteConflict/TransientTransaction/catalog changes/IX lock)
-        # — any other failure fails the step immediately, so a real defect is
-        # never masked by a blanket retry.
-        run: |
-          set -euo pipefail
-          SESSION_FILE=$(mktemp "$RUNNER_TEMP/eclass-restart-XXXXXX")
-          SEED_LOG=$(mktemp "$RUNNER_TEMP/eclass-seed-XXXXXX.log")
-          trap 'rm -f "$SESSION_FILE" "$SEED_LOG"' EXIT
-
-          USER_ID=""
-          for attempt in 1 2 3; do
-            # Write output straight to the file; do NOT stream raw to the log.
-            npx tsx scripts/restart-seed.ts "$SESSION_FILE" >"$SEED_LOG" 2>&1 || true
-            USER_ID=$(grep '^SEEDED ' "$SEED_LOG" | awk '{print $2}' || true)
-            if [ -n "$USER_ID" ]; then break; fi
-            # Retry ONLY for a classified transient Mongo error; anything else
-            # is a real defect — print the scrubbed log and fail immediately.
-            if [ "$attempt" -lt 3 ] \
-               && grep -qE "E11000|WriteConflict|TransientTransaction|catalog changes|IX lock" "$SEED_LOG"; then
-              echo "::warning::restart-seed transient error on attempt $attempt. Scrubbed output:"
-              sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG"
-              sleep $((attempt * 3))
-              continue
-            fi
-            break
-          done
-
-          if [ -z "$USER_ID" ]; then
-            echo "::error::restart-seed produced no SEEDED line. Scrubbed output:"
-            sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG"
-            exit 1
-          fi
-
-          if [ -z "$USER_ID" ]; then
-            echo "::error::restart-seed produced no SEEDED line after 3 attempts. Scrubbed output of the last attempt:"
-            sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG" || true
-            exit 1
-          fi
-          npx tsx scripts/restart-resolve.ts "$SESSION_FILE" "$USER_ID"
+      # Cross-process restart proof (ECLASS-65) now lives in
+      # tests/integration/auth/cross-process-restart.test.ts, run as part of
+      # the "Unit + integration" step above. The old bash+npx step was flaky
+      # (empty scrubbed log, ~2s exit on roughly half of CI runs) because the
+      # `npx tsx scripts/restart-seed.ts` invocation in a fresh shell after the
+      # heavy integration job occasionally failed to start cleanly. Moving the
+      # proof into vitest reuses the already-warm Payload boot path, gives full
+      # stdout/stderr visibility via child_process.spawn, and yields deterministic
+      # retry on classified transient Mongo errors.
 
       - name: Production dependency audit (0 high/critical)
         run: npm audit --omit=dev --audit-level=high
