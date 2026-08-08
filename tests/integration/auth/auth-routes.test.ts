@@ -154,9 +154,13 @@ integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
     row = await sessionRowFor(p, user.id)
     expect(row?.revoked).toBe(true)
 
-    // The response always clears the cookie.
-    const cleared = logoutRes.headers.get('set-cookie')
-    expect(cleared).toMatch(/eclass_session=;\s*Max-Age=0/i)
+    // The response always clears the cookie: empty value + Max-Age=0. Next.js
+    // serializes attributes as `eclass_session=; Path=/; Max-Age=0; Secure;
+    // HttpOnly; SameSite=lax` — Path=/ sits between the empty value and
+    // Max-Age, so check each attribute independently rather than as a run.
+    const cleared = logoutRes.headers.get('set-cookie')!
+    expect(cleared).toMatch(/eclass_session=;/i)
+    expect(cleared).toMatch(/Max-Age=0/i)
   })
 
   it('logout without a cookie is a no-op even if the body carries a real sessionId', async () => {
