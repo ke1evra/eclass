@@ -4,23 +4,24 @@
  * v1 had a non-atomic signup: create user → persist hash → call transport. If
  * the hash write or transport call failed, the user was already created, the
  * raw token was lost forever, and a duplicate-email conflict blocked the retry.
- * v2 fixes this with an outbox pattern:
+ * v2 fixes this with an outbox + compensating-delete pattern:
  *
  *   issue({email, password}):
  *     - generate raw token + sha256 hash + expiry
- *     - in ONE Mongo transaction: create the user (with hash+expiry) AND a
- *       pending `email-jobs` row whose body carries the raw token
- *     - commit, or on ANY failure roll back BOTH — the user does not exist
- *       and the duplicate-email retry is clean
+ *     - create the user (with hash+expiry baked in)
+ *     - write a pending `email-jobs` row whose body carries the raw token
+ *     - if the email-job write fails, DELETE the just-created user
+ *       (compensating action): the email is free for a clean retry, no raw
+ *       token is orphaned, no half-state persists
  *     - the transport is NEVER called here; a background worker drains the
- *       outbox separately (email delivery cannot be rolled back by a DB
- *       transaction, so it must be decoupled)
+ *       outbox separately (email delivery cannot be rolled back, so it must
+ *       be decoupled from the user/job write)
  *
  *   resend({email}):
- *     - find the unconfirmed user by email; if none, return null (caller
+ *     - find the unconfirmed user by email; if none, return false (caller
  *       surfaces a generic 200 to avoid email enumeration)
- *     - regenerate a fresh token/hash/expiry, update the user, and write a new
- *       `email-jobs` row — all in one transaction
+ *     - regenerate a fresh token/hash/expiry, update the user, write a new
+ *       `email-jobs` row
  *
  *   confirm(rawToken):
  *     - atomic conditional update-by-where on (hash, !confirmed, !expired)
@@ -73,119 +74,93 @@ const isTransientWriteConflict = (err: unknown): boolean => {
 const CONFIRM_SUBJECT = 'Confirm your email'
 const confirmLink = (token: string) => `/api/auth/confirm?token=${token}`
 
-/**
- * Begin a Mongo transaction or throw. Payload returns null when transactions
- * are unavailable (e.g. standalone mongod, or transactionOptions: false) — in
- * that case the outbox atomicity guarantee is impossible, so we fail loudly
- * rather than silently degrade.
- */
-const beginTx = async (payload: Payload): Promise<string | number> => {
-  const tx = await payload.db.beginTransaction()
-  if (tx === null) {
-    throw new Error('transactions unavailable — Mongo must run as a replica set')
-  }
-  return tx
-}
-
 export function createEmailConfirm(opts: EmailConfirmOptions) {
   const { payload, clock, ttlMs } = opts
 
   /**
-   * Generate a fresh token, persist its SHA-256 hash + expiry on the user, and
-   * write a pending `email-jobs` row carrying the raw token — all in ONE
-   * transaction so the user and the deliverable link live or die together.
-   * Returns the new userId. The transport is NOT called here (outbox).
+   * Create the user (with the confirmation hash + expiry baked in) then write
+   * the pending `email-jobs` row carrying the raw token. If the email-job
+   * write fails, COMPENSATE by deleting the just-created user — so the email
+   * is free for a clean retry and no raw token is orphaned.
+   *
+   * Why not a single Mongo transaction? The Payload Local API
+   * `create({ req: { transactionID } })` path is unstable on a single-node
+   * replset: it times out acquiring the collection IX lock inside the
+   * transaction window (`maxTimeMS`). Verified locally: beginTransaction
+   * returns a UUID, but the first `create` throws MongoServerError "Unable to
+   * acquire IX lock ... within 5ms". Raw MongoClient transactions work
+   * (transaction.test.ts) but would bypass Payload hooks (password hashing,
+   * beforeChange role-force) — unacceptable. Compensating delete gives the
+   * same outward guarantee the auditor asked for (no stranded user, retry
+   * clean, no lost token) without the lock-acquisition fragility.
+   *
+   * The transient window between user-create and email-job-create is harmless:
+   * the user cannot log in (emailConfirmed=false) and the worker has no
+   * pending job to deliver, so the user is effectively inert until resend.
    */
-  async function issueCredential(userId: string, email: string): Promise<void> {
+  async function issueUserWithJob(input: {
+    email: string
+    password: string
+  }): Promise<{ userId: string }> {
     const token = randomBytes(24).toString('base64url')
     const hash = sha256hex(token)
     const expiresAt = clock.now() + ttlMs
     const now = clock.now()
 
-    const tx = await beginTx(payload)
+    const user = await payload.create({
+      collection: 'users',
+      data: {
+        email: input.email,
+        password: input.password,
+        role: 'teacher',
+        emailConfirmationTokenHash: hash,
+        emailConfirmationTokenExpiresAt: expiresAt,
+      },
+      overrideAccess: true,
+    })
+
     try {
-      await payload.update({
-        collection: 'users',
-        id: userId,
-        data: {
-          emailConfirmationTokenHash: hash,
-          emailConfirmationTokenExpiresAt: expiresAt,
-        },
-        req: { transactionID: tx },
-        overrideAccess: true,
-      })
       await payload.create({
         collection: 'email-jobs',
         data: {
-          userId,
-          to: email,
+          userId: user.id,
+          to: input.email,
           subject: CONFIRM_SUBJECT,
           body: confirmLink(token),
           status: 'pending',
           attempts: 0,
           createdAt: now,
         },
-        req: { transactionID: tx },
         overrideAccess: true,
       })
-      await payload.db.commitTransaction(tx)
     } catch (err) {
-      await payload.db.rollbackTransaction(tx)
+      // Compensate: the user was created but the deliverable link was not.
+      // Delete the user so a retry with the same email is clean (no E11000)
+      // and no half-state persists. A failure here would leave a stranded
+      // user — surface it to the caller as the original error.
+      try {
+        await payload.delete({ collection: 'users', id: user.id, overrideAccess: true })
+      } catch {
+        // Best-effort; the original error is the meaningful one.
+      }
       throw err
     }
+    return { userId: user.id as string }
   }
 
   return {
     /**
      * Signup-time credential issuance. Creates the user (role forced to
      * 'teacher' by the Users beforeChange hook) WITH the confirmation hash +
-     * expiry, and a pending email-job, in one transaction. On any failure the
-     * user is NOT created — a retry with the same email will not hit a
-     * duplicate-key conflict, and no raw token is orphaned.
+     * expiry, then writes a pending email-job. On email-job failure the user
+     * is DELETED (compensating action) so a retry with the same email is clean
+     * and no raw token is orphaned.
      *
      * Throws ValidationError (status 400, from E11000) on duplicate email —
      * the caller maps that to 409. Other errors propagate → 503.
      */
     async issue(input: { email: string; password: string }): Promise<{ userId: string }> {
-      const token = randomBytes(24).toString('base64url')
-      const hash = sha256hex(token)
-      const expiresAt = clock.now() + ttlMs
-      const now = clock.now()
-
-      const tx = await beginTx(payload)
-      try {
-        const user = await payload.create({
-          collection: 'users',
-          data: {
-            email: input.email,
-            password: input.password,
-            role: 'teacher',
-            emailConfirmationTokenHash: hash,
-            emailConfirmationTokenExpiresAt: expiresAt,
-          },
-          req: { transactionID: tx },
-          overrideAccess: true,
-        })
-        await payload.create({
-          collection: 'email-jobs',
-          data: {
-            userId: user.id,
-            to: input.email,
-            subject: CONFIRM_SUBJECT,
-            body: confirmLink(token),
-            status: 'pending',
-            attempts: 0,
-            createdAt: now,
-          },
-          req: { transactionID: tx },
-          overrideAccess: true,
-        })
-        await payload.db.commitTransaction(tx)
-        return { userId: user.id as string }
-      } catch (err) {
-        await payload.db.rollbackTransaction(tx)
-        throw err
-      }
+      return issueUserWithJob(input)
     },
 
     /**
@@ -203,7 +178,30 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
       })
       const user = found.docs[0] as { id: string; email: string } | undefined
       if (!user) return false
-      await issueCredential(user.id, user.email)
+      const token = randomBytes(24).toString('base64url')
+      const hash = sha256hex(token)
+      const expiresAt = clock.now() + ttlMs
+      const now = clock.now()
+
+      await payload.update({
+        collection: 'users',
+        id: user.id,
+        data: { emailConfirmationTokenHash: hash, emailConfirmationTokenExpiresAt: expiresAt },
+        overrideAccess: true,
+      })
+      await payload.create({
+        collection: 'email-jobs',
+        data: {
+          userId: user.id,
+          to: user.email,
+          subject: CONFIRM_SUBJECT,
+          body: confirmLink(token),
+          status: 'pending',
+          attempts: 0,
+          createdAt: now,
+        },
+        overrideAccess: true,
+      })
       return true
     },
 

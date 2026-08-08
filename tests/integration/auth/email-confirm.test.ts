@@ -165,12 +165,13 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     expect(outbox.tokenFor(email)).toBeUndefined()
   })
 
-  it('transaction rollback: a failure mid-signup leaves NO user (retry is clean)', async () => {
+  it('compensating delete: a failure mid-signup leaves NO user (retry is clean)', async () => {
     const p = await getPayloadSingleton()
     const email = uniqueEmail('rollback')
 
-    // Wrap the payload so the email-jobs create fails AFTER the user create,
-    // forcing the transaction to roll back. Both writes must disappear.
+    // Wrap the payload so the email-jobs create fails AFTER the user create.
+    // The compensating-delete path must remove the just-created user so the
+    // email is free for a clean retry and no raw token is orphaned.
     const boom = new Error('email-jobs insert failed')
     const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
       get(target, prop) {
@@ -190,7 +191,7 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     )
     expect(res.status).toBe(503)
 
-    // The user was NOT persisted (transaction rolled back).
+    // The user was DELETED by the compensating action — no stranded half-state.
     const found = await p.find({
       collection: 'users',
       where: { email: { equals: email } },
@@ -199,7 +200,7 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     expect(found.totalDocs).toBe(0)
 
     // A retry with the same email must NOT hit a duplicate-key conflict — the
-    // email is free because the first attempt fully rolled back.
+    // email is free because the compensating delete cleaned up.
     const retry = await signupRoute(jsonReq('http://localhost/api/auth/signup', { email, password: 'longpass123' }))
     expect(retry.status).toBe(200)
   })
