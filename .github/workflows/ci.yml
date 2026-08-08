@@ -82,14 +82,14 @@ jobs:
         # The seeder prints ONLY the userId — the session token never reaches
         # stdout/logs.
         #
-        # Both stdout AND stderr of the seed process are captured to a log file
-        # (NOT suppressed): on failure the log is printed AFTER scrubbing any
-        # long base64url-looking run, in case a future change accidentally leaks
-        # a token. The seed runs up to 3 times with a short backoff — the Mongo
-        # replset in CI occasionally needs a moment after rs.initiate before it
-        # accepts writes, and `npx tsx` cold-compilation can race that window.
-        # This is documented CI-flake resilience, NOT masking an app bug: a real
-        # defect reproduces on every attempt and still fails the step.
+        # The seed output (stdout+stderr) is written DIRECTLY to a log file —
+        # never tee'd raw into the GitHub Actions log. On failure, the file is
+        # printed only AFTER scrubbing any long base64url-looking run, so a
+        # future change that accidentally leaks a token cannot reach the logs.
+        # Retry is gated on a CLASSIFIED transient Mongo error
+        # (E11000/WriteConflict/TransientTransaction/catalog changes/IX lock)
+        # — any other failure fails the step immediately, so a real defect is
+        # never masked by a blanket retry.
         run: |
           set -euo pipefail
           SESSION_FILE=$(mktemp "$RUNNER_TEMP/eclass-restart-XXXXXX")
@@ -98,16 +98,27 @@ jobs:
 
           USER_ID=""
           for attempt in 1 2 3; do
-            # tee captures stdout+stderr to the log AND forwards to grep, so the
-            # SEEDED line is parsed while the full output is preserved for
-            # diagnostics. `|| true` keeps the pipeline alive on a non-match.
-            USER_ID=$(npx tsx scripts/restart-seed.ts "$SESSION_FILE" 2>&1 | tee "$SEED_LOG" | grep '^SEEDED ' | awk '{print $2}' || true)
+            # Write output straight to the file; do NOT stream raw to the log.
+            npx tsx scripts/restart-seed.ts "$SESSION_FILE" >"$SEED_LOG" 2>&1 || true
+            USER_ID=$(grep '^SEEDED ' "$SEED_LOG" | awk '{print $2}' || true)
             if [ -n "$USER_ID" ]; then break; fi
-            echo "::warning::restart-seed attempt $attempt produced no SEEDED line; retrying after backoff."
-            # Scrub+print what we got, so a real defect is visible even mid-retry.
-            sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG" || true
-            sleep $((attempt * 3))
+            # Retry ONLY for a classified transient Mongo error; anything else
+            # is a real defect — print the scrubbed log and fail immediately.
+            if [ "$attempt" -lt 3 ] \
+               && grep -qE "E11000|WriteConflict|TransientTransaction|catalog changes|IX lock" "$SEED_LOG"; then
+              echo "::warning::restart-seed transient error on attempt $attempt. Scrubbed output:"
+              sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG"
+              sleep $((attempt * 3))
+              continue
+            fi
+            break
           done
+
+          if [ -z "$USER_ID" ]; then
+            echo "::error::restart-seed produced no SEEDED line. Scrubbed output:"
+            sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG"
+            exit 1
+          fi
 
           if [ -z "$USER_ID" ]; then
             echo "::error::restart-seed produced no SEEDED line after 3 attempts. Scrubbed output of the last attempt:"

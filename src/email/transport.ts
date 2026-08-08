@@ -53,3 +53,19 @@ export function getEmailTransport(): EmailTransport {
 export function setEmailTransport(transport: EmailTransport): void {
   current = transport
 }
+
+/**
+ * Whether a real email delivery path is wired. The signup route refuses with
+ * 503 `email_not_configured` when this is false, so production cannot silently
+ * create users who can never receive a confirmation link. True when:
+ *   - NODE_ENV === 'test' (tests swap in an InMemoryOutbox via setEmailTransport)
+ *   - a non-default transport has been set (setEmailTransport at app boot)
+ *   - SMTP_DSN is present (production SMTP, checked lazily so deploy-time env wins)
+ */
+export function isEmailConfigured(): boolean {
+  return (
+    process.env.NODE_ENV === 'test' ||
+    current !== loggingTransport ||
+    Boolean(process.env.SMTP_DSN)
+  )
+}
