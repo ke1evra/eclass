@@ -12,6 +12,7 @@ import {
   type EmailMessage,
   type EmailTransport,
 } from '@/email/transport'
+import { runEmailWorker } from '@/auth/email-worker'
 
 /**
  * ECLASS-65 — route-boundary integration test (audit block 1 + 3, and the five
@@ -245,7 +246,9 @@ integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
     expect(earlyLogin.status).toBe(403)
     expect(await earlyLogin.json()).toEqual({ ok: false, code: 'email_not_confirmed' })
 
-    // 3) confirm — the raw token is read from the outbox and consumed.
+    // 3) confirm — the worker drains the outbox and delivers the token; the
+    //    signup response never contained it.
+    await runEmailWorker({ payload: p, transport: outbox, clock: { now: () => Date.now() } })
     const token = outbox.tokenFor(email)
     expect(token, 'outbox must have captured the confirmation token').toBeTypeOf('string')
     const confirmRes = await confirm(jsonReq('http://localhost/api/auth/confirm', { token }))

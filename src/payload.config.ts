@@ -5,6 +5,7 @@ import { mongooseAdapter } from '@payloadcms/db-mongodb'
 import { lexicalEditor } from '@payloadcms/richtext-lexical'
 import { Users } from './collections/Users'
 import { Sessions } from './collections/Sessions'
+import { EmailJobs } from './collections/EmailJobs'
 import { Classes } from './collections/Classes'
 import { Memberships } from './collections/Memberships'
 
@@ -41,5 +42,5 @@ export default buildConfig({
   typescript: {
     outputFile: path.resolve(dirname, '../payload-types.ts'),
   },
-  collections: [Users, Sessions, Classes, Memberships],
+  collections: [Users, Sessions, EmailJobs, Classes, Memberships],
 })

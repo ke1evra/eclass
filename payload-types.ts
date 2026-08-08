@@ -69,6 +69,7 @@ export interface Config {
   collections: {
     users: User;
     sessions: Session;
+    'email-jobs': EmailJob;
     classes: Class;
     memberships: Membership;
     'payload-kv': PayloadKv;
@@ -80,6 +81,7 @@ export interface Config {
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     sessions: SessionsSelect<false> | SessionsSelect<true>;
+    'email-jobs': EmailJobsSelect<false> | EmailJobsSelect<true>;
     classes: ClassesSelect<false> | ClassesSelect<true>;
     memberships: MembershipsSelect<false> | MembershipsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
@@ -168,6 +170,23 @@ export interface Session {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-jobs".
+ */
+export interface EmailJob {
+  id: string;
+  userId: string;
+  to: string;
+  subject: string;
+  body: string;
+  status: 'pending' | 'sent' | 'failed';
+  attempts?: number | null;
+  lastError?: string | null;
+  createdAt: number;
+  sentAt?: number | null;
+  updatedAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "classes".
  */
 export interface Class {
@@ -221,6 +240,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'sessions';
         value: string | Session;
+      } | null)
+    | ({
+        relationTo: 'email-jobs';
+        value: string | EmailJob;
       } | null)
     | ({
         relationTo: 'classes';
@@ -312,6 +335,22 @@ export interface SessionsSelect<T extends boolean = true> {
   revoked?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "email-jobs_select".
+ */
+export interface EmailJobsSelect<T extends boolean = true> {
+  userId?: T;
+  to?: T;
+  subject?: T;
+  body?: T;
+  status?: T;
+  attempts?: T;
+  lastError?: T;
+  createdAt?: T;
+  sentAt?: T;
+  updatedAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
