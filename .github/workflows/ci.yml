@@ -81,12 +81,24 @@ jobs:
         # (0600 via the seeder) with a trap-based cleanup that runs on ANY exit.
         # The seeder prints ONLY the userId — the session token never reaches
         # stdout/logs.
+        #
+        # stderr is captured to a log file (NOT suppressed): on failure the log
+        # is printed AFTER scrubbing any long base64url-looking run, in case a
+        # future change accidentally leaks a token. This keeps diagnostics
+        # visible without ever exposing a bearer secret.
         run: |
           set -euo pipefail
           SESSION_FILE=$(mktemp "$RUNNER_TEMP/eclass-restart-XXXXXX")
-          trap 'rm -f "$SESSION_FILE"' EXIT
-          USER_ID=$(npx tsx scripts/restart-seed.ts "$SESSION_FILE" 2>/dev/null | grep '^SEEDED ' | awk '{print $2}')
-          test -n "$USER_ID" || { echo "no SEEDED line"; exit 1; }
+          SEED_LOG=$(mktemp "$RUNNER_TEMP/eclass-seed-XXXXXX.log")
+          trap 'rm -f "$SESSION_FILE" "$SEED_LOG"' EXIT
+          USER_ID=$(npx tsx scripts/restart-seed.ts "$SESSION_FILE" 2>"$SEED_LOG" | grep '^SEEDED ' | awk '{print $2}' || true)
+          if [ -z "$USER_ID" ]; then
+            echo "::error::restart-seed produced no SEEDED line. Scrubbed stderr follows:"
+            # Defensively redact any long base64url run (the seeder emits only a
+            # userId; this guards against future regressions).
+            sed -E 's/[A-Za-z0-9_-]{20,}/[REDACTED]/g' "$SEED_LOG" || true
+            exit 1
+          fi
           npx tsx scripts/restart-resolve.ts "$SESSION_FILE" "$USER_ID"
 
       - name: Production dependency audit (0 high/critical)

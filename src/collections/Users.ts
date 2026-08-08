@@ -87,6 +87,26 @@ export const Users: CollectionConfig = {
       },
     },
     {
+      // ECLASS-67: SHA-256 hash of the one-time email-confirmation token. The
+      // RAW token is never persisted — only this hash. Server-only write
+      // (clients cannot set it); unique so the atomic update-by-where in the
+      // confirm flow can locate exactly one candidate. Mongo permits multiple
+      // nulls in a unique index, so users without a pending token coexist.
+      name: 'emailConfirmationTokenHash',
+      type: 'text',
+      unique: true,
+      index: true,
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
+      // ECLASS-67: epoch-ms when the confirmation token expires. Server-only.
+      name: 'emailConfirmationTokenExpiresAt',
+      type: 'number',
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
       // ECLASS-65: a blocked user is treated as anonymous by the resolver —
       // the existing session yields no Actor. Admin/server-only; a user cannot
       // unblock themselves.

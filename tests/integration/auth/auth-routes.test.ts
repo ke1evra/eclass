@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { NextRequest } from 'next/server'
 import type { Payload } from 'payload'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
@@ -6,6 +6,12 @@ import { handleLogin } from '@/app/api/auth/login/handler'
 import { POST as signup } from '@/app/api/auth/signup/route'
 import { POST as logout } from '@/app/api/auth/logout/route'
 import { POST as confirm } from '@/app/api/auth/confirm/route'
+import {
+  loggingTransport,
+  setEmailTransport,
+  type EmailMessage,
+  type EmailTransport,
+} from '@/email/transport'
 
 /**
  * ECLASS-65 — route-boundary integration test (audit block 1 + 3, and the five
@@ -55,9 +61,39 @@ async function sessionRowFor(p: Payload, userId: string | number) {
   return docs[0] as { sessionId: string; revoked: boolean; role: string } | undefined
 }
 
+/**
+ * Test-only email transport. The signup handler delivers the confirmation
+ * token here (never to the response body); the test reads it programmatically
+ * to drive the confirm step. Mirrors the outbox in email-confirm.test.ts.
+ */
+class InMemoryOutbox implements EmailTransport {
+  readonly sent: EmailMessage[] = []
+  async send(msg: EmailMessage): Promise<void> {
+    this.sent.push(msg)
+  }
+  tokenFor(to: string): string | undefined {
+    for (let i = this.sent.length - 1; i >= 0; i--) {
+      const m = this.sent[i]!
+      if (m.to === to) {
+        const match = m.body.match(/token=([A-Za-z0-9_-]+)/)
+        return match?.[1]
+      }
+    }
+    return undefined
+  }
+}
+
 integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
+  const outbox = new InMemoryOutbox()
+
   beforeEach(async () => {
     await clearData()
+    outbox.sent.length = 0
+    setEmailTransport(outbox)
+  })
+
+  afterEach(() => {
+    setEmailTransport(loggingTransport) // restore hygiene between suites
   })
 
   it('login response body contains NO sessionId / JWT / password / hash', async () => {
@@ -191,12 +227,15 @@ integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
     const email = uniqueEmail('flow')
     const password = 'longpass123'
 
-    // 1) signup — handler creates a teacher with emailConfirmed=false.
+    // 1) signup — handler creates a teacher with emailConfirmed=false and
+    //    issues a one-time token delivered via the email transport (outbox).
     const signupRes = await signup(jsonReq('http://localhost/api/auth/signup', { email, password }))
     expect(signupRes.status).toBe(200)
     const signupBody = await signupRes.json()
     expect(signupBody).toEqual({ ok: true, userId: signupBody.userId })
     const userId = signupBody.userId as string
+    // The token is NEVER in the response body.
+    expect(JSON.stringify(signupBody)).not.toMatch(/token|confirmation/i)
 
     // 2) login BEFORE confirm — must be refused with email_not_confirmed (403).
     const earlyLogin = await handleLogin(
@@ -206,8 +245,10 @@ integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
     expect(earlyLogin.status).toBe(403)
     expect(await earlyLogin.json()).toEqual({ ok: false, code: 'email_not_confirmed' })
 
-    // 3) confirm — handler flips emailConfirmed to true.
-    const confirmRes = await confirm(jsonReq('http://localhost/api/auth/confirm', { userId }))
+    // 3) confirm — the raw token is read from the outbox and consumed.
+    const token = outbox.tokenFor(email)
+    expect(token, 'outbox must have captured the confirmation token').toBeTypeOf('string')
+    const confirmRes = await confirm(jsonReq('http://localhost/api/auth/confirm', { token }))
     expect(confirmRes.status).toBe(200)
     expect(await confirmRes.json()).toEqual({ ok: true })
 
