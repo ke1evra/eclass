@@ -11,7 +11,18 @@
  * application session (ADR-0007). Only the opaque Sessions row is.
  */
 import type { Payload } from 'payload'
+import { APIError } from 'payload'
 import { randomBytes } from 'node:crypto'
+
+/**
+ * A Payload authentication failure is an APIError with status 401. Everything
+ * else thrown from payload.login() (5xx, network, DB) is an infrastructure
+ * error and MUST propagate — masking it as `invalid_credentials` hides real
+ * outages (blocker 3, ECLASS-65 audit). Mirrors `isNotFound` in
+ * payload-resolver.ts.
+ */
+const isAuthError = (err: unknown): boolean =>
+  err instanceof APIError && (err as { status?: number }).status === 401
 
 export interface Clock {
   now(): number
@@ -36,7 +47,10 @@ export interface LoginResult {
 
 export interface LoginError {
   ok: false
-  code: 'invalid_credentials' | 'email_not_confirmed' | 'rate_limited'
+  // NOTE: `rate_limited` is intentionally absent — rate limiting is not yet
+  // wired (TODO ECLASS-59). The contract will gain that variant when ECLASS-59
+  // ships an actual limiter; declaring it now would be a false contract.
+  code: 'invalid_credentials' | 'email_not_confirmed'
 }
 
 export interface SessionAdapterOptions {
@@ -54,30 +68,42 @@ export function createSessionAdapter(opts: SessionAdapterOptions) {
      * Returns the session id for the cookie — never the JWT or hash.
      */
     async login(input: LoginInput): Promise<LoginResult | LoginError> {
-      // Payload.login verifies the password; throws on bad credentials.
+      // Payload.login verifies the password; throws APIError(401) on bad
+      // credentials. Any OTHER throw (5xx, network, DB) re-throws so the route
+      // can surface it as 5xx instead of masking it as invalid_credentials.
       let loginResult
       try {
         loginResult = await payload.login({
           collection: 'users',
           data: { email: input.email, password: input.password },
         })
-      } catch {
-        return { ok: false, code: 'invalid_credentials' }
+      } catch (err) {
+        if (isAuthError(err)) return { ok: false, code: 'invalid_credentials' }
+        throw err
       }
       if (!loginResult.user) return { ok: false, code: 'invalid_credentials' }
 
-      const user = loginResult.user as { id: string; emailConfirmed?: boolean; blocked?: boolean }
+      const user = loginResult.user as {
+        id: string
+        emailConfirmed?: boolean
+        blocked?: boolean
+        role?: 'teacher' | 'student'
+      }
       if (user.blocked) return { ok: false, code: 'invalid_credentials' }
       if (user.emailConfirmed === false) return { ok: false, code: 'email_not_confirmed' }
 
-      // Create exactly ONE session row per login.
+      // Create exactly ONE session row per login. The role is read from the
+      // authenticated user (blocker 4) — resolver re-reads it on every request
+      // anyway, but the row itself must carry the correct role for
+      // audit/debugging and future student login. Fallback 'teacher' matches
+      // the Users beforeChange hook default on signup.
       const sessionId = randomBytes(18).toString('base64url')
       await payload.create({
         collection: 'sessions',
         data: {
           sessionId,
           userId: user.id,
-          role: 'teacher',
+          role: user.role ?? 'teacher',
           expiresAt: clock.now() + sessionTtlMs,
           revoked: false,
         },

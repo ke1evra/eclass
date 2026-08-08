@@ -154,4 +154,61 @@ integrationSuite('ECLASS-65/56: session adapter policy', () => {
     expect(serialized).not.toMatch(/"token"/i)
     expect(serialized).not.toMatch(/eyJ[A-Za-z0-9_-]/)
   })
+
+  it('a NON-auth error from payload.login() is RE-THROWN, not masked as invalid_credentials', async () => {
+    // Blocker 3: only APIError(401) becomes invalid_credentials. A 5xx / DB /
+    // network error must propagate so the route can surface it as 5xx. Mirrors
+    // the resolver-level test in payload-auth-authority.test.ts.
+    const p = await getPayloadSingleton()
+    const boom: Error & { status?: number } = Object.assign(new Error('connection refused'), {
+      status: 503,
+    })
+    const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
+      get(target, prop) {
+        if (prop === 'login') return async () => Promise.reject(boom)
+        const value = target[prop as symbol]
+        return typeof value === 'function' ? value.bind(p) : value
+      },
+    })
+    const adapter = createSessionAdapter({
+      payload: throwingPayload as never,
+      clock,
+      sessionTtlMs: HOUR,
+    })
+    await expect(
+      adapter.login({ email: 'x@y.z', password: 'whatever' }),
+    ).rejects.toThrow(/connection refused/)
+  })
+
+  it('the session row carries the ACTUAL user role, not a hardcoded teacher', async () => {
+    // Blocker 4: a student logging in must get a session row with role=student.
+    // The resolver re-reads role from the user anyway, but the persisted row
+    // must be correct for audit/debugging and future student login.
+    const p = await getPayloadSingleton()
+    const email = uniqueEmail('student')
+    const user = await p.create({
+      collection: 'users',
+      data: { email, password: 'longpass123', role: 'teacher', emailConfirmed: true },
+      overrideAccess: true,
+    })
+    // beforeChange forces 'teacher' on create; switch to student via the
+    // trusted server path (no req.user → hook allows the change).
+    await p.update({
+      collection: 'users',
+      id: user.id,
+      data: { role: 'student' },
+      overrideAccess: true,
+    })
+
+    const adapter = createSessionAdapter({ payload: p, clock, sessionTtlMs: HOUR })
+    const result = await adapter.login({ email, password: 'longpass123' })
+    if (!result.ok) throw new Error('login failed')
+
+    const row = await p.find({
+      collection: 'sessions',
+      where: { sessionId: { equals: result.sessionId } },
+      overrideAccess: true,
+    })
+    expect(row.docs[0]?.role).toBe('student')
+  })
 })
