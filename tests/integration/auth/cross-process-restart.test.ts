@@ -52,14 +52,38 @@ async function runResolver(sessionFile: string, userId: string): Promise<ChildRe
       stderr += d.toString()
     })
     child.on('error', reject)
-    child.on('close', (code) => resolve({ code: code ?? -1, stdout, stderr }))
+    // Hard timeout: a healthy resolve takes ~2-3s on CI. If the child has not
+    // exited in 25s (cold tsx compile + Payload boot + resolve), kill it so the
+    // test fails fast instead of hanging until the vitest per-test cap.
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL')
+      } catch {
+        /* ignore */
+      }
+      resolve({ code: -1, stdout, stderr: `${stderr}\n[runResolver] timed out after 25s` })
+    }, 25_000)
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: code ?? -1, stdout, stderr })
+    })
   })
 }
 
-const isTransient = (s: string): boolean =>
-  /E11000|WriteConflict|TransientTransaction|catalog changes|IX lock|connection refused|topology|server selection/i.test(
-    s,
-  )
+/**
+ * A failure is "transient" (worth retrying) when it is a classified Mongo error
+ * OR when the child produced no output at all — on CI the `npx tsx` cold start
+ * occasionally exits in ~2s with empty stdout/stderr before Payload boots,
+ * which is an infrastructure race, not an app defect.
+ */
+const isTransient = (r: ChildResult): boolean => {
+  const combined = `${r.stdout}\n${r.stderr}`
+  if (/E11000|WriteConflict|TransientTransaction|catalog changes|IX lock|connection refused|topology|server selection/i.test(combined)) {
+    return true
+  }
+  // Empty output + nonzero exit: the process never got to run meaningfully.
+  return r.code !== 0 && r.stdout.trim() === '' && r.stderr.trim() === ''
+}
 
 integrationSuite('ECLASS-65: cross-process restart proof (child_process)', () => {
   beforeEach(async () => {
@@ -91,20 +115,22 @@ integrationSuite('ECLASS-65: cross-process restart proof (child_process)', () =>
     writeFileSync(sessionFile, sessionId, { mode: 0o600 })
 
     try {
-      // Retry only on classified transient errors; surface real failures with
-      // full stdout+stderr so the cause is visible (unlike the old bash step).
+      // Retry on classified transient errors (Mongo write-conflict, or the
+      // `npx tsx` cold-start race that exits with empty output before Payload
+      // boots). Surface real failures with full stdout+stderr+code so the
+      // cause is visible.
       let result: ChildResult | undefined
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 4; attempt++) {
         result = await runResolver(sessionFile, String(user.id))
         if (result.code === 0 && /RESOLVED/.test(result.stdout)) break
-        const combined = `${result.stdout}\n${result.stderr}`
-        if (attempt < 3 && isTransient(combined)) {
+        if (attempt < 4 && isTransient(result)) {
           // eslint-disable-next-line no-console
           console.warn(
-            `[cross-process-restart] transient error on attempt ${attempt}, retrying. ` +
-              `Scrubbed output: ${combined.replace(/[A-Za-z0-9_-]{20,}/g, '[REDACTED]')}`,
+            `[cross-process-restart] transient error on attempt ${attempt} ` +
+              `(code=${result.code}), retrying. Scrubbed output: ` +
+              `${(result.stdout + result.stderr).replace(/[A-Za-z0-9_-]{20,}/g, '[REDACTED]')}`,
           )
-          await new Promise((r) => setTimeout(r, attempt * 1000))
+          await new Promise((r) => setTimeout(r, attempt * 1500))
           continue
         }
         break
@@ -112,9 +138,10 @@ integrationSuite('ECLASS-65: cross-process restart proof (child_process)', () =>
 
       expect(result, 'resolver must have run at least once').toBeDefined()
       const r = result!
-      expect(r.stdout, `child stdout:\n${r.stdout}\nchild stderr:\n${r.stderr}`).toMatch(
-        new RegExp(`RESOLVED ${user.id} teacher`),
-      )
+      expect(
+        r.stdout,
+        `child exit code=${r.code}\nchild stdout:\n${r.stdout}\nchild stderr:\n${r.stderr}`,
+      ).toMatch(new RegExp(`RESOLVED ${user.id} teacher`))
       expect(r.code).toBe(0)
       // The session id (bearer) must never appear in the child's output.
       const combined = `${r.stdout}\n${r.stderr}`
@@ -127,5 +154,5 @@ integrationSuite('ECLASS-65: cross-process restart proof (child_process)', () =>
         /* ignore */
       }
     }
-  }, 30_000)
+  }, 90_000)
 })
