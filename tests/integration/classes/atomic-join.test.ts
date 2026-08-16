@@ -220,4 +220,15 @@ integrationSuite('ECLASS-57: atomic invite acceptance (Mongo transactions)', () 
       code: 11_000,
     })
   })
+
+  it('validation branches: malformed code / login / displayName / password → validation_error', async () => {
+    const p = await getPayloadSingleton()
+    const join = createAtomicJoin({ payload: p, clock: { now: () => Date.now() } })
+
+    expect(await join.acceptInviteAndCreateStudent({ code: '', login: 'a@b.ru', displayName: 'X', password: 'longpass123' })).toEqual({ ok: false, code: 'validation_error' })
+    expect(await join.acceptInviteAndCreateStudent({ code: 'A'.repeat(80), login: 'a@b.ru', displayName: 'X', password: 'longpass123' })).toEqual({ ok: false, code: 'validation_error' })
+    expect(await join.acceptInviteAndCreateStudent({ code: 'ABCD2345', login: 'not-an-email', displayName: 'X', password: 'longpass123' })).toEqual({ ok: false, code: 'validation_error' })
+    expect(await join.acceptInviteAndCreateStudent({ code: 'ABCD2345', login: 'a@b.ru', displayName: '   ', password: 'longpass123' })).toEqual({ ok: false, code: 'validation_error' })
+    expect(await join.acceptInviteAndCreateStudent({ code: 'ABCD2345', login: 'a@b.ru', displayName: 'X', password: 'short' })).toEqual({ ok: false, code: 'validation_error' })
+  })
 })

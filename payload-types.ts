@@ -180,8 +180,11 @@ export interface EmailJob {
   to: string;
   subject: string;
   body: string;
-  status: 'pending' | 'sent' | 'failed';
+  status: 'pending' | 'claimed' | 'sent' | 'failed';
   attempts?: number | null;
+  nextAttemptAt?: number | null;
+  claimedAt?: number | null;
+  leaseExpiresAt?: number | null;
   lastError?: string | null;
   createdAt: number;
   sentAt?: number | null;
@@ -369,6 +372,9 @@ export interface EmailJobsSelect<T extends boolean = true> {
   body?: T;
   status?: T;
   attempts?: T;
+  nextAttemptAt?: T;
+  claimedAt?: T;
+  leaseExpiresAt?: T;
   lastError?: T;
   createdAt?: T;
   sentAt?: T;

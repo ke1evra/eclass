@@ -1,6 +1,7 @@
 import { test, expect, request as pwRequest } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
 import { MongoClient } from 'mongodb'
+import { openEmailBody } from '../../src/email/crypto'
 
 /**
  * ECLASS-56 (Stage D) — the canonical P1 identity flow, NO SKIPS:
@@ -23,6 +24,12 @@ const teacherPassword = 'longpass123'
 const studentLogin = `e2e-student-${runId}@eclasstest.ru`
 const studentPassword = 'longpass123'
 
+/**
+ * The confirmation token the way a DELIVERED email would carry it: the outbox
+ * row stores the body SEALED (AES-256-GCM, ECLASS-68); the test opens it with
+ * the same key derivation the app process uses (same env), playing the role
+ * of the email delivery layer. The token never exists in Mongo plaintext.
+ */
 async function confirmationToken(login: string): Promise<string> {
   const client = new MongoClient(DATABASE_URL)
   await client.connect()
@@ -30,8 +37,10 @@ async function confirmationToken(login: string): Promise<string> {
     const jobs = client.db(DB_NAME).collection('email-jobs')
     const job = await jobs.findOne({ to: login })
     expect(job, `outbox must hold a confirmation job for ${login}`).not.toBeNull()
-    const token = String(job!.body).match(/token=([A-Za-z0-9_-]+)/)?.[1]
-    expect(token, 'job body must contain the bearer token').toBeTruthy()
+    expect(String(job!.body).startsWith('v1:'), 'outbox body must be sealed at rest').toBe(true)
+    const plaintext = openEmailBody(String(job!.body))
+    const token = plaintext.match(/token=([A-Za-z0-9_-]+)/)?.[1]
+    expect(token, 'sealed body must contain the bearer token').toBeTruthy()
     return token as string
   } finally {
     await client.close()

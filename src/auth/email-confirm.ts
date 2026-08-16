@@ -37,6 +37,7 @@
  */
 import type { Payload } from 'payload'
 import { randomBytes, createHash } from 'node:crypto'
+import { sealEmailBody } from '@/email/crypto'
 
 export interface Clock {
   now(): number
@@ -126,7 +127,9 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
           userId: user.id,
           to: input.email,
           subject: CONFIRM_SUBJECT,
-          body: confirmLink(token),
+          // ECLASS-68: the raw token is SEALED (AES-256-GCM) — plaintext
+          // exists only in memory and inside the email itself.
+          body: sealEmailBody(confirmLink(token)),
           status: 'pending',
           attempts: 0,
           createdAt: now,
@@ -136,12 +139,15 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
     } catch (err) {
       // Compensate: the user was created but the deliverable link was not.
       // Delete the user so a retry with the same email is clean (no E11000)
-      // and no half-state persists. A failure here would leave a stranded
-      // user — surface it to the caller as the original error.
+      // and no half-state persists. A failure HERE would leave a stranded
+      // user — it is LOGGED (defect 4) and the original error still surfaces.
       try {
         await payload.delete({ collection: 'users', id: user.id, overrideAccess: true })
-      } catch {
-        // Best-effort; the original error is the meaningful one.
+      } catch (cleanupErr) {
+        console.error(
+          '[signup] compensating user-delete FAILED — stranded user possible:',
+          cleanupErr,
+        )
       }
       throw err
     }
@@ -168,6 +174,13 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
      * queue a fresh email-job. Used by `/api/auth/resend`. Returns false (no
      * such unconfirmed user) so the caller can return a generic 200 without
      * leaking which emails are registered.
+     *
+     * ATOMICITY (defect 5, ECLASS-68): the job is created FIRST (it does not
+     * depend on the user row's hash fields), THEN the user's hash is updated.
+     * If the update fails, the job is compensating-DELETED — the OLD token
+     * stays valid and no orphan job with an undeliverable token remains. The
+     * inverse order (update-then-create) would invalidate the old token with
+     * no way to deliver the new one.
      */
     async resend(email: string): Promise<boolean> {
       const found = await payload.find({
@@ -183,25 +196,45 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
       const expiresAt = clock.now() + ttlMs
       const now = clock.now()
 
-      await payload.update({
-        collection: 'users',
-        id: user.id,
-        data: { emailConfirmationTokenHash: hash, emailConfirmationTokenExpiresAt: expiresAt },
-        overrideAccess: true,
-      })
-      await payload.create({
-        collection: 'email-jobs',
-        data: {
-          userId: user.id,
-          to: user.email,
-          subject: CONFIRM_SUBJECT,
-          body: confirmLink(token),
-          status: 'pending',
-          attempts: 0,
-          createdAt: now,
-        },
-        overrideAccess: true,
-      })
+      let job: { id: string } | undefined
+      try {
+        job = (await payload.create({
+          collection: 'email-jobs',
+          data: {
+            userId: user.id,
+            to: user.email,
+            subject: CONFIRM_SUBJECT,
+            body: sealEmailBody(confirmLink(token)),
+            status: 'pending',
+            attempts: 0,
+            createdAt: now,
+          },
+          overrideAccess: true,
+        })) as unknown as { id: string }
+      } catch (err) {
+        console.error('[resend] email-job create failed; user state untouched:', err)
+        throw err
+      }
+
+      try {
+        await payload.update({
+          collection: 'users',
+          id: user.id,
+          data: { emailConfirmationTokenHash: hash, emailConfirmationTokenExpiresAt: expiresAt },
+          overrideAccess: true,
+        })
+      } catch (err) {
+        // Compensating delete: the job carries a token nobody can consume.
+        try {
+          await payload.delete({ collection: 'email-jobs', id: job.id, overrideAccess: true })
+        } catch (cleanupErr) {
+          console.error(
+            '[resend] compensating email-job delete FAILED — undeliverable job possible:',
+            cleanupErr,
+          )
+        }
+        throw err
+      }
       return true
     },
 

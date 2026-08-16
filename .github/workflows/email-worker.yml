@@ -1,0 +1,28 @@
+name: email-worker cron
+
+# ECLASS-68 (defect 6): the outbox worker is driven by a scheduler. GitHub
+# Actions cron granularity is 5 minutes — fine for confirmation emails. A
+# production deployment wanting ~30s cadence runs its OWN cron against the
+# same endpoint (documented infra obligation):
+#   */30 * * * *  curl -fsS -X POST -H "X-Worker-Secret: $EMAIL_WORKER_SECRET" \
+#     https://<host>/api/internal/email-worker
+#
+# Required repository secrets:
+#   EMAIL_WORKER_TARGET_URL — deployed base URL (e.g. https://app.example.com)
+#   EMAIL_WORKER_SECRET     — must equal the deployment's EMAIL_WORKER_SECRET
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  drain-outbox:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the email worker
+        run: |
+          curl -fsS -X POST \
+            -H "X-Worker-Secret: ${{ secrets.EMAIL_WORKER_SECRET }}" \
+            -H 'content-type: application/json' \
+            "${{ secrets.EMAIL_WORKER_TARGET_URL }}/api/internal/email-worker"
