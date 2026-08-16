@@ -3,6 +3,7 @@ import type { Payload } from 'payload'
 import { createAtomicJoin, type JoinErrorCode } from '@/classes/atomic-join'
 import { issueSession } from '@/auth/session-adapter'
 import { enforceRateLimit, JOIN_IP_RATE, JOIN_RATE } from '@/auth/rate-limit'
+import { SESSION_TTL_MS } from '@/auth/session-ttl'
 
 /**
  * POST /api/join — ECLASS-56 (Stage B) / ECLASS-57 / ECLASS-15.
@@ -17,8 +18,6 @@ import { enforceRateLimit, JOIN_IP_RATE, JOIN_RATE } from '@/auth/rate-limit'
  * the code exists; expired/revoked (410) carry a recovery hint; used/conflict
  * (409) tell the student to ask the teacher for a fresh code.
  */
-const HOUR_MS = 60 * 60 * 1000
-
 const joinStatus = (code: JoinErrorCode): number => {
   switch (code) {
     case 'validation_error':
@@ -87,7 +86,7 @@ export async function handleJoin(req: NextRequest, payload: Payload) {
     payload,
     { id: result.studentId, role: 'student' },
     { now: () => Date.now() },
-    30 * 24 * HOUR_MS,
+    SESSION_TTL_MS, // ONE policy for API/UI/join (ECLASS-13 review fix)
   )
 
   const res = NextResponse.json({ ok: true, classId: result.classId, studentId: result.studentId })

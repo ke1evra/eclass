@@ -16,6 +16,7 @@ import { createSessionAdapter, issueSession } from '@/auth/session-adapter'
 import { resolveActor } from '@/auth/payload-resolver'
 import { createEmailConfirm } from '@/auth/email-confirm'
 import { createPasswordReset } from '@/auth/password-reset'
+import { SESSION_TTL_MS } from '@/auth/session-ttl'
 import { isEmailConfigured } from '@/email/transport'
 import { createAtomicJoin } from '@/classes/atomic-join'
 import { getClassServices } from '@/classes/server'
@@ -23,7 +24,6 @@ import { getPageActor, SESSION_COOKIE } from '@/auth/server'
 import { getStudentWorkspaceService } from '@/students/server'
 
 const HOUR_MS = 60 * 60 * 1000
-const SESSION_TTL_MS = 30 * 24 * HOUR_MS
 const CONFIRM_TOKEN_TTL_MS = 24 * HOUR_MS
 
 const cookieOptions = (maxAgeMs: number) => ({
