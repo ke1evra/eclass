@@ -146,6 +146,46 @@ describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exit
     ).toMatch(/CLASS_FOUND 1/)
   }, 120_000)
 
+  it('ECLASS-59 literal cross-process: rate hits burned by an EXITED process limit a fresh process', async () => {
+    const key = `e2e-rate-xproc-${Date.now()}`
+
+    // Process A burns the whole window (5/5), then exits.
+    let burned: ChildResult | undefined
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      burned = await runScript('restart-persistence.ts', ['rate-hit', key, '5'])
+      if (burned.code === 0 && /RATE_HIT_DONE/.test(burned.stdout)) break
+      if (attempt < 3 && isTransient(burned)) {
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(burned!.code, `rate-hit output:
+${burned!.stdout}
+${burned!.stderr}`).toBe(0)
+    expect(burned!.stdout).toMatch(/RATE_HIT_DONE true/)
+
+    // Process B — a genuinely fresh process — must see the SAME window: denied.
+    let checked: ChildResult | undefined
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      checked = await runScript('restart-persistence.ts', ['rate-check', key])
+      if (checked.code === 0 && /RATE_CHECK/.test(checked.stdout)) break
+      if (attempt < 4 && isTransient(checked)) {
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(
+      checked!.stdout,
+      `rate-check exit=${checked!.code}
+stdout:
+${checked!.stdout}
+stderr:
+${checked!.stderr}`,
+    ).toMatch(/RATE_CHECK denied/)
+  }, 120_000)
+
   it('a session created by a process that has EXITED resolves in a freshly booted process', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'eclass-restart-'))
     const sessionFile = join(dir, 'session')

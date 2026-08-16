@@ -1,5 +1,6 @@
 import { getPayload } from 'payload'
 import config from '../src/payload.config.js'
+import { createMongoRateLimiter } from '../src/auth/rate-limit'
 
 // ECLASS-56 proof: data created in one process is found in ANOTHER process.
 // Argv: 'create <email>' or 'find <email>'.
@@ -53,6 +54,19 @@ if (mode === 'create') {
     overrideAccess: true,
   })
   console.log('CLASS_FOUND', found.totalDocs, found.docs[0]?.id ?? '-')
+} else if (mode === 'rate-hit') {
+  // ECLASS-59 literal cross-process proof: THIS process burns N hits of a
+  // named key, then exits; a fresh process must see the same window.
+  const key = email
+  const n = Number(process.argv[4] ?? 1)
+  const limiter = createMongoRateLimiter({ payload, clock: { now: () => Date.now() }, windowMs: 60_000, max: 5 })
+  let lastAllowed = true
+  for (let i = 0; i < n; i++) lastAllowed = (await limiter.hit(key)).allowed
+  console.log('RATE_HIT_DONE', lastAllowed)
+} else if (mode === 'rate-check') {
+  const limiter = createMongoRateLimiter({ payload, clock: { now: () => Date.now() }, windowMs: 60_000, max: 5 })
+  const d = await limiter.hit(email)
+  console.log('RATE_CHECK', d.allowed ? 'allowed' : 'denied', d.retryAfterMs)
 } else if (mode === 'session-read') {
   const found = await payload.find({
     collection: 'sessions',

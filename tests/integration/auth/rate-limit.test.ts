@@ -172,6 +172,42 @@ integrationSuite('ECLASS-59: shared rate limiting (Mongo sliding window)', () =>
     expect(otherSource.status).toBe(401)
   })
 
+  it('performance: parallel logins do not block the event loop (async crypto, async limiter)', async () => {
+    const p = await getPayloadSingleton()
+    // Confirmed users so every login runs the full verify path.
+    const users = await Promise.all(
+      Array.from({ length: 8 }, (_, i) =>
+        p.create({
+          collection: 'users',
+          data: { email: uniqueEmail(`perf${i}`), password: 'longpass123', emailConfirmed: true },
+          overrideAccess: true,
+        }),
+      ),
+    )
+
+    const logins = Promise.all(
+      users.map((u) =>
+        handleLogin(
+          jsonReq('http://localhost/api/auth/login', { email: (u as unknown as { email: string }).email, password: 'longpass123' }, `10.9.9.${users.indexOf(u) + 1}`),
+          p,
+        ),
+      ),
+    )
+
+    // While the 8 logins are in flight, three chained 25ms timers must fire
+    // roughly on time. With the OLD synchronous scrypt on the login path the
+    // loop stalled for the whole verify wall-time; with async crypto+limiter
+    // the chain completes within a small multiple of its nominal 75ms.
+    const t0 = Date.now()
+    const tick = () => new Promise<void>((r) => setTimeout(r, 25))
+    await tick(); await tick(); await tick()
+    const timerMs = Date.now() - t0
+
+    const results = await logins
+    expect(results.every((r) => r.status === 200)).toBe(true)
+    expect(timerMs, `3×25ms timer chain took ${timerMs}ms while 8 logins ran — event loop blocked?`).toBeLessThan(400)
+  })
+
   it('fail-closed: a limiter infrastructure failure rejects the mutation with 503', async () => {
     const p = await getPayloadSingleton()
     const boom = new Error('rate store down')
