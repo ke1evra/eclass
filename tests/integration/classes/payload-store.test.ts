@@ -22,8 +22,8 @@ integrationSuite('ECLASS-56: payload class/invite store adapter', () => {
     if (!a.ok || !b.ok) throw new Error('setup')
 
     const stu = 'stu-store-1'
-    expect((await classService.addStudent(teacher, a.class.id, stu)).ok).toBe(true)
-    expect((await classService.addStudent(teacher, a.class.id, stu)).code).toBe('conflict')
+    expect(await classService.addStudent(teacher, a.class.id, stu)).toEqual({ ok: true, added: true })
+    expect(await classService.addStudent(teacher, a.class.id, stu)).toEqual({ ok: false, code: 'conflict' })
     expect(await classService.getRoster(teacher, a.class.id)).toEqual({
       ok: true,
       studentIds: [stu],

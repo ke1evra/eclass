@@ -140,7 +140,7 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
 
           const claimed = await payload.db.connection.collection('invites').updateOne(
             { code, revoked: false, expiresAt: { $gt: now }, usedBy: null },
-            { $set: { usedBy: user.id, usedAt: now } },
+            { $set: { usedBy: String(user.id), usedAt: now } },
             { session },
           )
           if (claimed.matchedCount !== 1) {
@@ -152,10 +152,10 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
           // single-membership guard; E11000 aborts the whole transaction.
           await payload.db.connection
             .collection('memberships')
-            .insertOne({ classId, studentId: user.id }, { session })
+            .insertOne({ classId, studentId: String(user.id) }, { session })
 
           await payload.db.commitTransaction(transactionID)
-          return { ok: true, classId, studentId: user.id }
+          return { ok: true, classId, studentId: String(user.id) }
         } catch (err) {
           try {
             await payload.db.rollbackTransaction(transactionID)

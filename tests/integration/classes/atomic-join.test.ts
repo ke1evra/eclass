@@ -31,7 +31,7 @@ async function seedClassWithInvite(p: Payload, overrides: Partial<{ expiresAt: n
     data: { email: uniqueEmail('inv-tea'), password: 'longpass123', emailConfirmed: true },
     overrideAccess: true,
   })
-  const actor: Actor = { id: teacher.id, role: 'teacher' }
+  const actor: Actor = { id: String(teacher.id), role: 'teacher' }
   const { classService, inviteService } = getClassServices(p)
   const cls = await classService.createClass({ actor, name: 'Атомный класс', subjectVersionId: 'math-oge-2026' })
   if (!cls.ok) throw new Error('seed failed')
