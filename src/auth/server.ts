@@ -1,32 +1,28 @@
 /**
- * Server-side wiring for auth — CB-4 (ECLASS-51).
+ * Server-side auth wiring for pages — ECLASS-56 (Stage B).
  *
- * Provides a singleton session resolver backed by an in-memory store for the
- * skeleton. The real Payload-backed session store replaces this without
- * touching call sites. Crucially, NO identity is ever read from a URL — only
- * from the cookie via resolveSession().
+ * Payload/MongoDB is the ONLY session authority at the application boundary:
+ * the opaque `eclass_session` cookie resolves through resolveActor (Sessions
+ * row → Users row). The previous Map-backed resolver is gone from the
+ * production path — restarts no longer log anyone out.
  */
-import { createSessionResolver, type SessionStore } from './session'
+import { cookies } from 'next/headers'
+import { getPayload } from 'payload'
+import type { Actor } from '@/domain/authorization'
+import config from '@/payload.config'
+import { resolveActor } from './payload-resolver'
+import { SESSION_COOKIE } from './route-actor'
 
-let cached: ReturnType<typeof createSessionResolver> | null = null
+export { SESSION_COOKIE }
 
-const buildStore = (): SessionStore => {
-  const sessions = new Map<string, { userId: string; role: 'teacher' | 'student'; expiresAt: number; revoked: boolean }>()
-  return {
-    async getSession(id) {
-      return sessions.get(id)
-    },
-  }
-}
-
-export const SESSION_COOKIE = 'eclass_session'
-
-export function getSessionResolver() {
-  if (!cached) {
-    cached = createSessionResolver({
-      store: buildStore(),
-      clock: { now: () => Date.now() },
-    })
-  }
-  return cached
+/**
+ * Resolve the page-level actor from the request cookies. Returns null for
+ * anonymous visitors; re-throws infrastructure errors (they must surface as
+ * 5xx, not silently log the user out).
+ */
+export async function getPageActor(): Promise<Actor | null> {
+  const cookieStore = await cookies()
+  const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+  const payload = await getPayload({ config })
+  return resolveActor(payload, sessionId, { now: () => Date.now() })
 }

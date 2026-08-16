@@ -206,14 +206,23 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
     },
 
     /**
-     * Consume a confirmation token. Atomic conditional update-by-where on
-     * (hash, !confirmed, !expired); single-use (the update nulls the hash).
+     * Consume a confirmation token. SINGLE-DOCUMENT ATOMIC conditional
+     * updateOne on (hash, !confirmed, !expired); single-use (the update nulls
+     * the hash).
      *
-     * Deterministic under concurrency: a WriteConflict / TransientTransaction
-     * error is retried up to 3 times. By the retry, the winner has nulled the
-     * hash, so the loser matches zero docs → 'invalid'. Result is always
-     * exactly one 'ok' (the winner) and 'invalid' for every loser — never a
-     * thrown error leaking the race to the client as 503.
+     * Why a raw updateOne and NOT payload.update({ where }): db-mongodb's
+     * update-by-where with a limit is find-then-update-by-ids — the where is
+     * NOT re-checked inside the write. Two concurrent confirms both read the
+     * still-unconfirmed doc and both "succeed" (observed as [200, 200]; the
+     * concurrent-confirm integration test catches exactly this). A raw
+     * conditional updateOne makes the check-and-set one atomic Mongo
+     * operation: exactly one caller matches, every loser gets matchedCount 0
+     * → 'invalid'.
+     *
+     * Payload hooks are intentionally bypassed: this write touches only the
+     * confirmation fields, not role/email (the Users beforeChange hook exists
+     * to freeze those for clients — a Local API call with overrideAccess is
+     * the trusted server path either way).
      *
      * Returns 'ok' on match, 'invalid' for any non-match (wrong/expired/
      * replayed/unknown — collapsed for anti-enumeration). Real infrastructure
@@ -223,21 +232,22 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
       const hash = sha256hex(rawToken)
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const updated = await payload.update({
-            collection: 'users',
-            where: {
-              emailConfirmationTokenHash: { equals: hash },
-              emailConfirmed: { equals: false },
-              emailConfirmationTokenExpiresAt: { greater_than: clock.now() },
+          const result = await payload.db.connection.collection('users').updateOne(
+            {
+              emailConfirmationTokenHash: hash,
+              emailConfirmed: false,
+              emailConfirmationTokenExpiresAt: { $gt: clock.now() },
             },
-            data: {
-              emailConfirmed: true,
-              emailConfirmationTokenHash: null,
-              emailConfirmationTokenExpiresAt: null,
+            {
+              $set: {
+                emailConfirmed: true,
+                emailConfirmationTokenHash: null,
+                emailConfirmationTokenExpiresAt: null,
+                updatedAt: new Date(),
+              },
             },
-            overrideAccess: true,
-          })
-          return updated.docs.length > 0 ? 'ok' : 'invalid'
+          )
+          return result.matchedCount === 1 ? 'ok' : 'invalid'
         } catch (err) {
           if (isTransientWriteConflict(err) && attempt < 3) continue
           throw err

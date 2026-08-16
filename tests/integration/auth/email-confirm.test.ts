@@ -236,16 +236,37 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     const email = uniqueEmail('boom')
     const { token } = await signUpAndDeliver(p, email, 'longpass123', outbox)
 
-    // Wrap the payload so update() rejects with a 503 — the route handler must
-    // surface HTTP 503, not collapse it to 400 invalid_or_expired.
+    // Wrap the payload so the atomic users.updateOne rejects — the route
+    // handler must surface HTTP 503, not collapse it to 400 invalid_or_expired.
     const boom: Error & { status?: number } = Object.assign(new Error('connection refused'), {
       status: 503,
     })
     const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
       get(target, prop) {
-        if (prop === 'update') return async () => Promise.reject(boom)
-        const value = target[prop as symbol]
-        return typeof value === 'function' ? value.bind(p) : value
+        if (prop !== 'db') return Reflect.get(target, prop)
+        const db = target.db as unknown as Record<string, unknown>
+        return new Proxy(db, {
+          get(dbTarget, dbProp) {
+            if (dbProp !== 'connection') return Reflect.get(dbTarget, dbProp)
+            const conn = dbTarget.connection as unknown as Record<string, unknown>
+            return new Proxy(conn, {
+              get(connTarget, connProp) {
+                if (connProp !== 'collection') return Reflect.get(connTarget, connProp)
+                const orig = (connTarget.collection as (n: string) => unknown).bind(connTarget)
+                return (name: string) => {
+                  if (name !== 'users') return orig(name)
+                  return new Proxy(orig(name) as object, {
+                    get(collTarget, collProp) {
+                      if (collProp === 'updateOne') return async () => Promise.reject(boom)
+                      const v = Reflect.get(collTarget, collProp)
+                      return typeof v === 'function' ? v.bind(collTarget) : v
+                    },
+                  })
+                }
+              },
+            })
+          },
+        })
       },
     }) as unknown as Payload
 

@@ -19,8 +19,10 @@ const makeStore = (): ClassStore => {
   const memberships = new Map<string, Set<string>>()
   return {
     async insertClass(c) {
-      classes.set(c.id, c)
-      memberships.set(c.id, new Set())
+      const stored = { ...c, id: `cls-${classes.size + 1}` }
+      classes.set(stored.id, stored)
+      memberships.set(stored.id, new Set())
+      return stored
     },
     async getClass(id) {
       return classes.get(id)

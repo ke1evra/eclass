@@ -10,7 +10,6 @@
  * real path. This closes the role-escalation hole where a student could create
  * a class by passing their id as ownerId.
  */
-import { randomBytes } from 'node:crypto'
 import { authorize, type Actor, type Decision } from '@/domain/authorization'
 import type { ClassEntity } from '@/domain/entities'
 
@@ -19,7 +18,12 @@ export interface StoredClass extends Omit<ClassEntity, 'inviteCode'> {
 }
 
 export interface ClassStore {
-  insertClass(c: StoredClass): Promise<void>
+  /**
+   * Insert a class and return the CANONICAL stored record. The store assigns
+   * the real id (Mongo ObjectId in production) — callers must use the returned
+   * value, never a locally-generated placeholder id.
+   */
+  insertClass(c: Omit<StoredClass, 'id'>): Promise<StoredClass>
   getClass(id: string): Promise<StoredClass | undefined>
   listClasses(ownerId: string, opts: { includeArchived: boolean }): Promise<StoredClass[]>
   updateClass(id: string, patch: Partial<StoredClass>): Promise<void>
@@ -67,14 +71,12 @@ export function createClassService(opts: Options) {
       if (!input.name.trim() || !input.subjectVersionId) {
         return { ok: false, code: 'validation_error' }
       }
-      const cls: StoredClass = {
-        id: `cls-${randomBytes(6).toString('hex')}`,
+      const cls = await store.insertClass({
         ownerId: input.actor.id,
         subjectVersionId: input.subjectVersionId,
-        name: input.name,
+        name: input.name.trim(),
         archivedAt: null,
-      }
-      await store.insertClass(cls)
+      })
       return { ok: true, class: cls }
     },
 

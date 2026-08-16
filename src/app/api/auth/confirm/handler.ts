@@ -29,7 +29,9 @@ export async function handleConfirm(req: NextRequest, payload: Payload) {
       return NextResponse.json({ ok: true })
     }
     return NextResponse.json({ ok: false, code: 'invalid_or_expired' }, { status: 400 })
-  } catch {
+  } catch (err) {
+    // Infrastructure failure — log for operators, never to the client.
+    console.error('[confirm] infrastructure error:', err)
     return NextResponse.json({ ok: false, code: 'error' }, { status: 503 })
   }
 }

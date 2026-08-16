@@ -8,6 +8,7 @@ import { Sessions } from './collections/Sessions'
 import { EmailJobs } from './collections/EmailJobs'
 import { Classes } from './collections/Classes'
 import { Memberships } from './collections/Memberships'
+import { Invites } from './collections/Invites'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -31,7 +32,10 @@ export default buildConfig({
   },
   editor: lexicalEditor({}),
   db: mongooseAdapter({
-    url: process.env.DATABASE_URL ?? 'mongodb://127.0.0.1:27018/eclass',
+    // `replicaSet=rs0` MUST be in the URI: @payloadcms/db-mongodb disables the
+    // transaction API (beginTransaction → null) when the client options carry
+    // no replicaSet, even if the deployment actually is a replset.
+    url: process.env.DATABASE_URL ?? 'mongodb://127.0.0.1:27018/eclass?replicaSet=rs0',
     // Replica set is required for transactions (ECLASS-57). The URL above points
     // at a local single-node replset; production uses the server Mongo replset.
     transactionOptions: {
@@ -42,5 +46,5 @@ export default buildConfig({
   typescript: {
     outputFile: path.resolve(dirname, '../payload-types.ts'),
   },
-  collections: [Users, Sessions, EmailJobs, Classes, Memberships],
+  collections: [Users, Sessions, EmailJobs, Classes, Memberships, Invites],
 })

@@ -33,5 +33,13 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    env: {
+      // The identity flow (signup→A4) requires the email path to be "wired";
+      // delivery itself is the Mongo outbox — E2E reads the token from
+      // email-jobs exactly like a delivered link would.
+      SMTP_DSN: process.env.SMTP_DSN ?? 'e2e-outbox-noop',
+      DATABASE_URL:
+        process.env.DATABASE_URL ?? 'mongodb://127.0.0.1:27018/eclass?replicaSet=rs0',
+    },
   },
 })

@@ -72,6 +72,7 @@ export interface Config {
     'email-jobs': EmailJob;
     classes: Class;
     memberships: Membership;
+    invites: Invite;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -84,6 +85,7 @@ export interface Config {
     'email-jobs': EmailJobsSelect<false> | EmailJobsSelect<true>;
     classes: ClassesSelect<false> | ClassesSelect<true>;
     memberships: MembershipsSelect<false> | MembershipsSelect<true>;
+    invites: InvitesSelect<false> | InvitesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -211,6 +213,22 @@ export interface Membership {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "invites".
+ */
+export interface Invite {
+  id: string;
+  code: string;
+  classId: string;
+  ownerId: string;
+  createdAt: number;
+  expiresAt: number;
+  usedBy?: string | null;
+  usedAt?: number | null;
+  revoked?: boolean | null;
+  updatedAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -252,6 +270,10 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'memberships';
         value: string | Membership;
+      } | null)
+    | ({
+        relationTo: 'invites';
+        value: string | Invite;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -373,6 +395,21 @@ export interface MembershipsSelect<T extends boolean = true> {
   studentId?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "invites_select".
+ */
+export interface InvitesSelect<T extends boolean = true> {
+  code?: T;
+  classId?: T;
+  ownerId?: T;
+  createdAt?: T;
+  expiresAt?: T;
+  usedBy?: T;
+  usedAt?: T;
+  revoked?: T;
+  updatedAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

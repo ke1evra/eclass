@@ -59,6 +59,43 @@ export interface SessionAdapterOptions {
   sessionTtlMs: number
 }
 
+/**
+ * Create exactly ONE opaque Sessions row for an ALREADY-AUTHENTICATED user
+ * (signup→confirm→login uses login(); the atomic invite join ECLASS-57 uses
+ * this after its transaction commits). Returns the cookie descriptor — never
+ * a JWT, never a hash.
+ */
+export async function issueSession(
+  payload: Payload,
+  user: { id: string; role: 'teacher' | 'student' },
+  clock: Clock,
+  sessionTtlMs: number,
+): Promise<LoginResult> {
+  const sessionId = randomBytes(18).toString('base64url')
+  await payload.create({
+    collection: 'sessions',
+    data: {
+      sessionId,
+      userId: user.id,
+      role: user.role,
+      expiresAt: clock.now() + sessionTtlMs,
+      revoked: false,
+    },
+    overrideAccess: true,
+  })
+  return {
+    ok: true,
+    sessionId,
+    userId: user.id,
+    cookie: {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'lax',
+      maxAgeMs: sessionTtlMs,
+    },
+  }
+}
+
 export function createSessionAdapter(opts: SessionAdapterOptions) {
   const { payload, clock, sessionTtlMs } = opts
 
@@ -92,35 +129,13 @@ export function createSessionAdapter(opts: SessionAdapterOptions) {
       if (user.blocked) return { ok: false, code: 'invalid_credentials' }
       if (user.emailConfirmed === false) return { ok: false, code: 'email_not_confirmed' }
 
-      // Create exactly ONE session row per login. The role is read from the
-      // authenticated user (blocker 4) — resolver re-reads it on every request
-      // anyway, but the row itself must carry the correct role for
-      // audit/debugging and future student login. Fallback 'teacher' matches
-      // the Users beforeChange hook default on signup.
-      const sessionId = randomBytes(18).toString('base64url')
-      await payload.create({
-        collection: 'sessions',
-        data: {
-          sessionId,
-          userId: user.id,
-          role: user.role ?? 'teacher',
-          expiresAt: clock.now() + sessionTtlMs,
-          revoked: false,
-        },
-        overrideAccess: true,
-      })
-
-      return {
-        ok: true,
-        sessionId,
-        userId: user.id,
-        cookie: {
-          httpOnly: true,
-          secure: true,
-          sameSite: 'lax',
-          maxAgeMs: sessionTtlMs,
-        },
-      }
+      // One login = exactly ONE session row (see issueSession).
+      return issueSession(
+        payload,
+        { id: user.id, role: user.role ?? 'teacher' },
+        clock,
+        sessionTtlMs,
+      )
     },
 
     /** Revoke a session by its opaque id (logout). */
