@@ -1,6 +1,8 @@
 import { getPayload } from 'payload'
 import config from '../src/payload.config.js'
 import { createMongoRateLimiter } from '../src/auth/rate-limit'
+import { migrateInvitesToHashes } from '../src/classes/invite-migration'
+import { createAtomicJoin } from '../src/classes/atomic-join'
 
 // ECLASS-56 proof: data created in one process is found in ANOTHER process.
 // Argv: 'create <email>' or 'find <email>'.
@@ -54,6 +56,35 @@ if (mode === 'create') {
     overrideAccess: true,
   })
   console.log('CLASS_FOUND', found.totalDocs, found.docs[0]?.id ?? '-')
+} else if (mode === 'invite-seed-legacy') {
+  // ECLASS-57 concurrent-migration proof: a LEGACY plaintext invite row.
+  const cls = await payload.create({
+    collection: 'classes',
+    data: { ownerId: 'legacy-migration-owner', subjectVersionId: 'math-oge-2026', name: `legacy-${Date.now()}` },
+    overrideAccess: true,
+  })
+  const code = 'LEGACY' + Math.random().toString(36).slice(2, 6).toUpperCase()
+  await payload.db.connection.collection('invites').insertOne({
+    code, // PLAINTEXT, as the pre-hashing implementation wrote it
+    classId: cls.id,
+    ownerId: 'legacy-migration-owner',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + 3_600_000,
+    revoked: false,
+  })
+  console.log('LEGACY_SEEDED', code, cls.id)
+} else if (mode === 'invite-migrate') {
+  const n = await migrateInvitesToHashes(payload)
+  console.log('MIGRATED', n)
+} else if (mode === 'join-legacy') {
+  const join = createAtomicJoin({ payload, clock: { now: () => Date.now() } })
+  const result = await join.acceptInviteAndCreateStudent({
+    code: email,
+    login: `join-legacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@eclasstest.ru`,
+    displayName: 'Миграционный Ученик',
+    password: 'longpass123',
+  })
+  console.log('JOIN_LEGACY', result.ok ? 'ok' : result.code)
 } else if (mode === 'rate-hit') {
   // ECLASS-59 literal cross-process proof: THIS process burns N hits of a
   // named key, then exits; a fresh process must see the same window.

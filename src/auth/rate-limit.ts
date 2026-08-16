@@ -131,6 +131,14 @@ export const CONFIRM_RATE: RateLimitPolicy = { windowMs: 15 * 60 * 1000, max: 20
 export const RESEND_RATE: RateLimitPolicy = { windowMs: 60 * 60 * 1000, max: 5 }
 export const JOIN_RATE: RateLimitPolicy = { windowMs: 60 * 60 * 1000, max: 15 }
 export const JOIN_IP_RATE: RateLimitPolicy = { windowMs: 60 * 60 * 1000, max: 30 }
+/**
+ * Per-CODE window (ECLASS-59 hardening): an invite code carries ~40 bits —
+ * hashing at rest does not stop ONLINE guessing. This bucket caps attempts on
+ * a specific code regardless of IP/login rotation (the code itself is hashed
+ * into the key). 10 tries / 15 min still tolerates a student's typos while
+ * making brute force hopeless.
+ */
+export const JOIN_CODE_RATE: RateLimitPolicy = { windowMs: 15 * 60 * 1000, max: 10 }
 
 /**
  * Shared enforcement for handlers: builds the composite key (bucket + account
@@ -145,6 +153,12 @@ export async function enforceRateLimit(args: {
   policy: RateLimitPolicy
   /** Account identifier (login/email); hashed into the key, never stored raw. */
   account?: string
+  /**
+   * false → the key carries NO ip component: the window is scoped purely to
+   * the account (e.g. a specific invite code) and rotation of source IPs
+   * cannot bypass it. Default true (source-aware windows).
+   */
+  includeIp?: boolean
 }): Promise<Response | null> {
   const limiter = createMongoRateLimiter({
     payload: args.payload,
@@ -153,7 +167,8 @@ export async function enforceRateLimit(args: {
     max: args.policy.max,
   })
 
-  const parts = [args.bucket, `ip:${clientIp(args.headers)}`]
+  const parts = [args.bucket]
+  if (args.includeIp !== false) parts.push(`ip:${clientIp(args.headers)}`)
   if (args.account) parts.push(`acct:${accountComponent(args.account)}`)
 
   const decision = await limiter.hit(parts.join('|'))

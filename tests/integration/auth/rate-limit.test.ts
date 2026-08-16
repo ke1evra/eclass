@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
 import { accountComponent, createMongoRateLimiter, enforceRateLimit } from '@/auth/rate-limit'
 import { handleLogin } from '@/app/api/auth/login/handler'
+import { handleJoin } from '@/app/api/join/handler'
 import type { Payload } from 'payload'
 
 /**
@@ -170,6 +171,32 @@ integrationSuite('ECLASS-59: shared rate limiting (Mongo sliding window)', () =>
       p,
     )
     expect(otherSource.status).toBe(401)
+  })
+
+  it('ECLASS-59 hardening: guessing a SPECIFIC invite code is capped per-code even with rotating IPs and logins', async () => {
+    const p = await getPayloadSingleton()
+    await p.db.connection.collection('rate-limits').deleteMany({ _id: /^join-code\|/ })
+
+    const code = 'GUESS12X'
+    let saw429 = false
+    for (let i = 0; i < 12; i++) {
+      // Rotate EVERYTHING the other buckets key on: fresh IP, fresh login.
+      const res = await handleJoin(
+        jsonReq('http://localhost/api/join', {
+          code,
+          login: uniqueEmail(`guess${i}`),
+          displayName: 'Угадывающий',
+          password: 'longpass123',
+        }, `203.0.113.${i % 250 + 1}`),
+        p,
+      )
+      if (res.status === 429) {
+        saw429 = true
+        expect(res.headers.get('retry-after')).toMatch(/^\d+$/)
+        break
+      }
+    }
+    expect(saw429, 'a per-code bucket must cap brute-forcing the 8-char code regardless of IP/login rotation').toBe(true)
   })
 
   it('performance: parallel logins do not block the event loop (async crypto, async limiter)', async () => {

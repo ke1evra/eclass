@@ -146,6 +146,49 @@ describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exit
     ).toMatch(/CLASS_FOUND 1/)
   }, 120_000)
 
+  it('ECLASS-57: TWO PROCESSES migrating legacy invites CONCURRENTLY converge; the raw code still joins', async () => {
+    // Seed a legacy plaintext row from a process that exits.
+    let seeded: ChildResult | undefined
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      seeded = await runScript('restart-persistence.ts', ['invite-seed-legacy'])
+      if (seeded.code === 0 && /LEGACY_SEEDED/.test(seeded.stdout)) break
+      if (attempt < 3 && isTransient(seeded)) {
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(seeded!.code, `seed output:\n${seeded!.stdout}\n${seeded!.stderr}`).toBe(0)
+    const legacyCode = seeded!.stdout.match(/LEGACY_SEEDED (\S+) (\S+)/)![1]!
+
+    // Two genuinely separate processes run the migration AT THE SAME TIME.
+    const [a, b] = await Promise.all([
+      runScript('restart-persistence.ts', ['invite-migrate']),
+      runScript('restart-persistence.ts', ['invite-migrate']),
+    ])
+    for (const [name, r] of [['A', a], ['B', b]] as const) {
+      expect(r.code, `migrate ${name}: ${r.stdout}\n${r.stderr}`).toBe(0)
+      expect(r.stdout).toMatch(/MIGRATED \d+/)
+    }
+
+    // A THIRD fresh process joins with the RAW legacy code — the concurrent
+    // migration must not have corrupted or double-hashed the row.
+    let joined: ChildResult | undefined
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      joined = await runScript('restart-persistence.ts', ['join-legacy', legacyCode])
+      if (joined.code === 0 && /JOIN_LEGACY/.test(joined.stdout)) break
+      if (attempt < 4 && isTransient(joined)) {
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(
+      joined!.stdout,
+      `join exit=${joined!.code}\nstdout:\n${joined!.stdout}\nstderr:\n${joined!.stderr}`,
+    ).toMatch(/JOIN_LEGACY ok/)
+  }, 180_000)
+
   it('ECLASS-59 literal cross-process: rate hits burned by an EXITED process limit a fresh process', async () => {
     const key = `e2e-rate-xproc-${Date.now()}`
 

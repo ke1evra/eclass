@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { Payload } from 'payload'
 import { createAtomicJoin, type JoinErrorCode } from '@/classes/atomic-join'
 import { issueSession } from '@/auth/session-adapter'
-import { enforceRateLimit, JOIN_IP_RATE, JOIN_RATE } from '@/auth/rate-limit'
+import { enforceRateLimit, JOIN_CODE_RATE, JOIN_IP_RATE, JOIN_RATE } from '@/auth/rate-limit'
 import { SESSION_TTL_MS } from '@/auth/session-ttl'
 
 /**
@@ -58,6 +58,17 @@ export async function handleJoin(req: NextRequest, payload: Payload) {
         headers: req.headers,
         bucket: 'join-ip',
         policy: JOIN_IP_RATE,
+      })
+    }
+    if (!limited && body?.code) {
+      // Per-code: caps guessing THIS code even when IP and login rotate.
+      limited = await enforceRateLimit({
+        payload,
+        headers: req.headers,
+        bucket: 'join-code',
+        policy: JOIN_CODE_RATE,
+        account: body.code,
+        includeIp: false, // the cap is on the CODE, not the source
       })
     }
   } catch {

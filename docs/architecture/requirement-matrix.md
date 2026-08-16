@@ -9,6 +9,10 @@
 >
 > Статус считается per-boundary (route/приложение), а не per-service: unit
 > домена не повышает статус, пока граница Payload/Mongo не покрыта.
+>
+> Терминология прогонов: «локальный CI-preflight» = все шаги ci.yml выполнены
+> на локальной машине (replset, без rerun). «Acceptance proven» присваивается
+> ТОЛЬКО по зелёному GitHub Actions run на точном HEAD (+ main-run после merge).
 
 ## Легенда статусов
 
@@ -25,7 +29,7 @@
 |---|---|---|---|---|---|
 | **R1** CI блокирует merge при test/lint/typecheck/build/a11y failure | — | ECLASS-11/60 | ci.yml шаги + `tests/integration/compliance/skip-registry.test.ts` | `quality` job, build step | Integrated |
 | **R2** Запрет незарегистрированных skip/todo в critical E2E | — | ECLASS-60 | `skip-registry.test.ts` ("every test.skip in acceptance is registered") | `quality` job (unit) | Acceptance proven |
-| **R3** Unit не заменяет integration; integration = реальная Payload/MongoDB | — | ECLASS-56 | `tests/integration/classes/class-routes.test.ts` (второе Mongo-подключение читает данные), `tests/integration/auth/*` против replica set | `quality` job, Mongo service | Acceptance proven (локально; CI run ожидает пуша) |
+| **R3** Unit не заменяет integration; integration = реальная Payload/MongoDB | — | ECLASS-56 | `tests/integration/classes/class-routes.test.ts` (второе Mongo-подключение читает данные), `tests/integration/auth/*` против replica set | `quality` job, Mongo service | Integrated — локальный CI-preflight; ждёт GitHub CI |
 | **R4** Tenant isolation: ни один отрицательный кейс не возвращает чужие данные | T1–T3, S1–S2, E2, E7 | ECLASS-17/50/56 | `tenant-isolation.test.ts` (домен) + `class-routes.test.ts` "IDOR: teacher B…" (Mongo route) | `quality` job | Acceptance proven |
 | **R5** Invite replay защищён; атомарное принятие; код приглашения хранится ТОЛЬКО хешем | T3, A7, A8, S1, E5 | ECLASS-15/57 | `tests/integration/classes/atomic-join.test.ts` (parallel accept, rollback, replay, unique index, hashed storage + миграция) + `p1-identity-flow.spec.ts` (E5 replay) | `quality` + `e2e` | Acceptance proven |
 | **R6** Аудит содержит actor/action/resource/time без PII | — | ECLASS-17 | `tenant-isolation.test.ts` "audit PII hygiene" | `quality` job | Acceptance proven |
@@ -35,8 +39,8 @@
 | **R10** Axe serious/critical = 0 на критических страницах | все публичные + T1, S1 | ECLASS-53/60 | `tests/acceptance/accessibility.spec.ts` (/, /about/mvp, /student, /login, /signup, /signup/pending, /join) + axe в `p1-identity-flow.spec.ts` (T1, S1) | `e2e` job | Acceptance proven |
 | **R11** npm audit high=0/critical=0 | — | ECLASS-55 | CI `npm audit` шаг + локально `npm audit --omit=dev` | `quality` job | Acceptance proven |
 | **R12** Keyboard-only критический поток; E8 (истёкшая сессия) реально достижим; единый SESSION_TTL | A2, A5, E8 | ECLASS-13/60 | `p1-identity-flow.spec.ts` (keyboard-only login, E8-reachable) + `password-reset-flow.spec.ts` (keyboard-only A5) + `session-ttl.test.ts` | `e2e` + `quality` | Acceptance proven |
-| **R13** Rate limit в общем хранилище: sliding window, fail-closed, без enumeration; ЛИТЕРАЛЬНЫЙ cross-process + неблокирующий login | A2, A3, A5, E4 | ECLASS-59 | `tests/integration/auth/rate-limit.test.ts` (multi-instance, race, 429, privacy, fail-closed, latency-проба) + `cross-process-restart.test.ts` (rate-hit/rate-check) | `quality` job | Acceptance proven |
-| **R14** Критический P1-поток A1→T3→A7→S1 без skip | Journey Map, A1–A8, T1–T3, S1–S2 | ECLASS-2/56 | `tests/acceptance/p1-identity-flow.spec.ts` (без skip; student viewport 320px, no-h-scroll) | `e2e` job | Acceptance proven (эпик ждёт ECLASS-16) |
+| **R13** Rate limit в общем хранилище: sliding window, fail-closed, без enumeration; ЛИТЕРАЛЬНЫЙ cross-process + неблокирующий login | A2, A3, A5, E4 | ECLASS-59 | `tests/integration/auth/rate-limit.test.ts` (multi-instance, race, 429, privacy, fail-closed, latency-проба, per-code окно против брутфорса кода) + `cross-process-restart.test.ts` (rate-hit/rate-check) | `quality` job | Integrated — локальный CI-preflight зелёный; ждёт GitHub CI |
+| **R14** Критический P1-поток A1→T3→A7→S1 без skip | Journey Map, A1–A8, T1–T3, S1–S2 | ECLASS-2/56 | `tests/acceptance/p1-identity-flow.spec.ts` (без skip; student viewport 320px, no-h-scroll) | `e2e` job | Integrated — локальный CI-preflight зелёный; ждёт GitHub CI (эпик ждёт ECLASS-16) |
 | **R15** Перезапуск процесса не теряет данные (сессии и классы) | — | ECLASS-65/56/14 | `cross-process-restart.test.ts` (создатель завершается, свежий процесс читает) | `quality` job | Acceptance proven |
 | **R16** Submit идемпотентен и устойчив к обрыву сети | S5, S6, E6 | ECLASS-29 | (план) Mongo transaction + network emulation | `e2e` job | Pending (ECLASS-29) |
 | **R17** Email outbox: sealed токены at rest, атомарный claim+lease, реальный backoff, job-first resend, SMTP+cron | A4, A5 | ECLASS-68 | `tests/integration/auth/email-outbox.test.ts` + `tests/unit/email/crypto-smtp.test.ts` | `quality` job | Acceptance proven (live-SMTP круг — опционально по DoD) |
