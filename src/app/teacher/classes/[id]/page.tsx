@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { getPayload } from 'payload'
 import config from '@/payload.config'
-import { getPageActor } from '@/auth/server'
+import { getPageAuth } from '@/auth/server'
 import { getClassServices } from '@/classes/server'
 import { findSubjectVersion } from '@/content/catalog'
 import { archiveClassAction, createInviteAction, logoutAction, renameClassAction } from '../../../actions'
@@ -20,8 +20,8 @@ export default async function ClassDetailPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ invite?: string; error?: string }>
 }) {
-  const actor = await getPageActor()
-  if (!actor) redirect('/login?notice=auth')
+  const { actor, sessionState } = await getPageAuth()
+  if (!actor) redirect(sessionState === 'dead' ? '/login?notice=expired' : '/login?notice=auth')
   if (actor.role !== 'teacher') redirect('/student')
 
   const { id } = await params

@@ -28,3 +28,23 @@ export async function migrateInvitesToHashes(payload: Payload): Promise<number> 
   }
   return migrated
 }
+
+let ensured: Promise<number> | null = null
+
+/**
+ * Lazily run the migration once per PROCESS from the server layer (class
+ * services / join). NOT from instrumentation.ts: importing payload there
+ * drags it into the browser-fallback module graph ('stream' unresolved in
+ * dev). Failure is logged and the guard resets so the next call retries —
+ * legacy rows fail join with invite_invalid (the safe direction).
+ */
+export function ensureInvitesHashed(payload: Payload): Promise<number> {
+  if (!ensured) {
+    ensured = migrateInvitesToHashes(payload).catch((err) => {
+      console.error('[invite-migration] run failed; will retry on next call:', err)
+      ensured = null
+      return 0
+    })
+  }
+  return ensured
+}

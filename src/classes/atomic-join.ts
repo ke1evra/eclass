@@ -20,6 +20,7 @@
 import type { Payload } from 'payload'
 import { APIError } from 'payload'
 import { hashInviteCode } from './invite'
+import { ensureInvitesHashed } from './invite-migration'
 
 export interface Clock {
   now(): number
@@ -102,6 +103,9 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
       if (!input.displayName?.trim() || input.displayName.trim().length > 120)
         return { ok: false, code: 'validation_error' }
       if (!input.password || input.password.length < 8) return { ok: false, code: 'validation_error' }
+
+      // Legacy plaintext rows (pre-hashing DB) become claimable first.
+      await ensureInvitesHashed(payload)
 
       const now = clock.now()
 

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
-import { getPageActor } from '@/auth/server'
+import { getPageAuth } from '@/auth/server'
 import { listSubjectVersions } from '@/content/catalog'
 import { createClassAction } from '../../../actions'
 
@@ -13,8 +13,8 @@ export default async function NewClassPage({
 }: {
   searchParams: Promise<{ error?: string }>
 }) {
-  const actor = await getPageActor()
-  if (!actor) redirect('/login?notice=auth')
+  const { actor, sessionState } = await getPageAuth()
+  if (!actor) redirect(sessionState === 'dead' ? '/login?notice=expired' : '/login?notice=auth')
   if (actor.role !== 'teacher') redirect('/student')
   const { error } = await searchParams
 

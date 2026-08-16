@@ -77,6 +77,44 @@ test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
     await expect(page.getByRole('heading', { name: 'Кабинет учителя' })).toBeVisible()
   })
 
+  test('E8 is REACHABLE: an expired session redirects to A2 with the expired notice (not the generic auth one)', async ({ browser, baseURL }) => {
+    test.setTimeout(120_000)
+
+    // Provision + confirm + login a teacher through the UI path.
+    const email = `e2e-exp-${runId}@eclasstest.ru`
+    const api = await pwRequest.newContext({ baseURL })
+    expect((await api.post('/api/auth/signup', { data: { email, password: teacherPassword } })).status()).toBe(200)
+    const token = await confirmationToken(email)
+    expect((await api.post('/api/auth/confirm', { data: { token } })).status()).toBe(200)
+    await api.dispose()
+
+    const page = await (await browser.newContext()).newPage()
+    await page.goto('/login')
+    await page.fill('#email', email)
+    await page.fill('#password', teacherPassword)
+    await page.click('button[type=submit]')
+    await page.waitForURL('**/teacher')
+
+    // Expire the session server-side: the cookie stays in the browser, the
+    // Sessions row moves into the past — exactly what TTL expiry looks like.
+    const cookieValue = (await page.context().cookies()).find((c) => c.name === 'eclass_session')!.value
+    const client = new MongoClient(DATABASE_URL)
+    await client.connect()
+    try {
+      await client
+        .db(DB_NAME)
+        .collection('sessions')
+        .updateOne({ sessionId: cookieValue }, { $set: { expiresAt: Date.now() - 1000 } })
+    } finally {
+      await client.close()
+    }
+
+    // RED before the fix: the redirect said notice=auth (expired state unreachable).
+    await page.goto('/teacher')
+    await page.waitForURL('**/login?notice=expired')
+    await expect(page.getByText('Сессия истекла — войдите снова.')).toBeVisible()
+  })
+
   test('A1 → A3 → A4 → confirm → A2 → T1 → T2 → T3 → A7 → S1/S2/A8 → roster; E5 replay rejected', async ({ browser, baseURL }) => {
     test.setTimeout(180_000)
 

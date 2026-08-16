@@ -9,10 +9,13 @@ import type { Payload } from 'payload'
 import { createPayloadClassStore } from './payload-store'
 import { createClassService } from './service'
 import { createInviteService } from './invite'
+import { ensureInvitesHashed } from './invite-migration'
 
 export const INVITE_TTL_MS = 24 * 60 * 60 * 1000
 
 export function getClassServices(payload: Payload) {
+  // First server touch converts any legacy plaintext invite rows (ECLASS-57).
+  void ensureInvitesHashed(payload)
   const store = createPayloadClassStore(payload)
   const clock = { now: () => Date.now() }
   return {

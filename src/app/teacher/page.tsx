@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { getPayload } from 'payload'
 import config from '@/payload.config'
-import { getPageActor } from '@/auth/server'
+import { getPageAuth } from '@/auth/server'
 import { getClassServices } from '@/classes/server'
 import { findSubjectVersion } from '@/content/catalog'
 import { logoutAction } from '../actions'
@@ -14,8 +14,8 @@ import { logoutAction } from '../actions'
  * dashboard IS the onboarding checklist.
  */
 export default async function TeacherPage() {
-  const actor = await getPageActor()
-  if (!actor) redirect('/login?notice=auth')
+  const { actor, sessionState } = await getPageAuth()
+  if (!actor) redirect(sessionState === 'dead' ? '/login?notice=expired' : '/login?notice=auth')
   if (actor.role !== 'teacher') redirect('/student')
 
   const payload = await getPayload({ config })
