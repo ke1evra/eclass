@@ -19,6 +19,7 @@
  */
 import type { Payload } from 'payload'
 import { APIError } from 'payload'
+import { hashInviteCode } from './invite'
 
 export interface Clock {
   now(): number
@@ -78,7 +79,7 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
 
   /** Fresh read of the invite for a specific (non-enumerating-per-class) error code. */
   const rediagose = async (code: string): Promise<JoinErrorCode> => {
-    const inv = await payload.db.connection.collection('invites').findOne({ code })
+    const inv = await payload.db.connection.collection('invites').findOne({ code: hashInviteCode(code) })
     if (!inv) return 'invite_invalid'
     if (inv.revoked) return 'invite_revoked'
     if (typeof inv.expiresAt === 'number' && clock.now() >= inv.expiresAt) return 'invite_expired'
@@ -106,7 +107,8 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
 
       // Pre-read outside the transaction ONLY to pick the specific error code
       // early (better UX); the authoritative check is the atomic claim below.
-      const pre = await payload.db.connection.collection('invites').findOne({ code })
+      const codeHash = hashInviteCode(code)
+      const pre = await payload.db.connection.collection('invites').findOne({ code: codeHash })
       if (!pre) return { ok: false, code: 'invite_invalid' }
       if (pre.revoked) return { ok: false, code: 'invite_revoked' }
       if (typeof pre.expiresAt === 'number' && now >= pre.expiresAt)
@@ -139,7 +141,7 @@ export function createAtomicJoin(opts: AtomicJoinOptions) {
           })
 
           const claimed = await payload.db.connection.collection('invites').updateOne(
-            { code, revoked: false, expiresAt: { $gt: now }, usedBy: null },
+            { code: codeHash, revoked: false, expiresAt: { $gt: now }, usedBy: null },
             { $set: { usedBy: String(user.id), usedAt: now } },
             { session },
           )

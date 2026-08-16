@@ -12,7 +12,7 @@
  */
 import type { Payload, Where } from 'payload'
 import type { ClassStore, StoredClass } from './service'
-import type { InviteRecord, InviteStore } from './invite'
+import { hashInviteCode, type InviteRecord, type InviteStore } from './invite'
 
 type ClassDoc = {
   id: string
@@ -165,7 +165,8 @@ export function createPayloadClassStore(payload: Payload): ClassStore & InviteSt
       await payload.create({
         collection: 'invites',
         data: {
-          code: inv.code,
+          // ECLASS-57: at rest only the sha256 lives here — never the raw code.
+          code: hashInviteCode(inv.code),
           classId: inv.classId,
           ownerId: inv.ownerId,
           createdAt: inv.createdAt,
@@ -179,7 +180,7 @@ export function createPayloadClassStore(payload: Payload): ClassStore & InviteSt
     async getInvite(code) {
       const { docs } = await payload.find({
         collection: 'invites',
-        where: { code: { equals: code } },
+        where: { code: { equals: hashInviteCode(code) } },
         limit: 1,
         overrideAccess: true,
         depth: 0,
@@ -191,7 +192,7 @@ export function createPayloadClassStore(payload: Payload): ClassStore & InviteSt
     async markUsed(code, studentId) {
       const { docs } = await payload.find({
         collection: 'invites',
-        where: { code: { equals: code } },
+        where: { code: { equals: hashInviteCode(code) } },
         limit: 1,
         overrideAccess: true,
         depth: 0,
@@ -210,7 +211,7 @@ export function createPayloadClassStore(payload: Payload): ClassStore & InviteSt
     async revokeInvite(code) {
       const { docs } = await payload.find({
         collection: 'invites',
-        where: { code: { equals: code } },
+        where: { code: { equals: hashInviteCode(code) } },
         limit: 1,
         overrideAccess: true,
         depth: 0,

@@ -12,7 +12,16 @@
  *   - unknown / expired / revoked codes return distinguishable codes so the UI
  *     can offer a recovery path ("ask the teacher for a new code").
  */
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
+
+/**
+ * Storage form of an invite code (ECLASS-57 rework): the DB holds ONLY this
+ * sha256 — the raw code lives in the teacher's chat message and the student's
+ * input, never at rest. Normalization (trim + upper) matches how join treats
+ * input, so 'abcd2345' and 'ABCD2345 ' claim the same row.
+ */
+export const hashInviteCode = (code: string): string =>
+  createHash('sha256').update(code.trim().toUpperCase()).digest('hex')
 
 export interface Clock {
   now(): number

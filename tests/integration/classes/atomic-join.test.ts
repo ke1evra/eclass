@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Payload } from 'payload'
 import { clearData, getPayloadSingleton, integrationSuite, uniqueEmail } from '../_payload'
 import { createAtomicJoin } from '@/classes/atomic-join'
+import { hashInviteCode } from '@/classes/invite'
+import { migrateInvitesToHashes } from '@/classes/invite-migration'
 import { getClassServices } from '@/classes/server'
 import type { Actor } from '@/domain/authorization'
 
@@ -40,7 +42,7 @@ async function seedClassWithInvite(p: Payload, overrides: Partial<{ expiresAt: n
 
   if (Object.keys(overrides).length > 0) {
     await p.db.connection.collection('invites').updateOne(
-      { code: invite.code },
+      { code: hashInviteCode(invite.code) },
       { $set: overrides },
     )
   }
@@ -65,7 +67,7 @@ integrationSuite('ECLASS-57: atomic invite acceptance (Mongo transactions)', () 
     expect((user as unknown as { role: string }).role).toBe('student')
     expect((user as unknown as { emailConfirmed: boolean }).emailConfirmed).toBe(true)
 
-    const inv = await p.db.connection.collection('invites').findOne({ code })
+    const inv = await p.db.connection.collection('invites').findOne({ code: hashInviteCode(code) })
     expect(inv?.usedBy).toBe(result.studentId)
 
     const memberCount = await p.count({
@@ -153,7 +155,7 @@ integrationSuite('ECLASS-57: atomic invite acceptance (Mongo transactions)', () 
     )
 
     // NOTHING persisted: invite unconsumed, no membership, no stranded user.
-    const inv = await p.db.connection.collection('invites').findOne({ code })
+    const inv = await p.db.connection.collection('invites').findOne({ code: hashInviteCode(code) })
     expect(inv?.usedBy ?? null).toBeNull()
     const users = await p.find({ collection: 'users', where: { email: { equals: login } }, overrideAccess: true })
     expect(users.totalDocs).toBe(0)
@@ -203,12 +205,61 @@ integrationSuite('ECLASS-57: atomic invite acceptance (Mongo transactions)', () 
     const result = await join.acceptInviteAndCreateStudent(joinInput(code, { login: taken }))
     expect(result).toEqual({ ok: false, code: 'conflict' })
 
-    const inv = await p.db.connection.collection('invites').findOne({ code })
+    const inv = await p.db.connection.collection('invites').findOne({ code: hashInviteCode(code) })
     expect(inv?.usedBy ?? null).toBeNull()
 
     // Retry with a free login succeeds on the SAME code.
     const retry = await join.acceptInviteAndCreateStudent(joinInput(code))
     expect(retry.ok).toBe(true)
+  })
+
+  it('ECLASS-57 rework: the invite code is stored HASHED — raw code never rests in Mongo', async () => {
+    const p = await getPayloadSingleton()
+    const join = createAtomicJoin({ payload: p, clock: { now: () => Date.now() } })
+    const { code } = await seedClassWithInvite(p)
+
+    const doc = await p.db.connection.collection('invites').findOne({ usedBy: null, revoked: false })
+    expect(doc, 'a fresh invite row must exist').not.toBeNull()
+    // RED until hashing lands: today the row stores the RAW 8-char code.
+    expect(String(doc!.code)).toBe(hashInviteCode(code))
+    expect(String(doc!.code)).not.toBe(code)
+    expect(String(doc!.code)).toMatch(/^[0-9a-f]{64}$/)
+
+    // …and the raw code still WORKS for join and is correctly denied on replay.
+    const first = await join.acceptInviteAndCreateStudent(joinInput(code))
+    expect(first.ok).toBe(true)
+    const replay = await join.acceptInviteAndCreateStudent(joinInput(code))
+    expect(replay).toEqual({ ok: false, code: 'invite_used' })
+  })
+
+  it('ECLASS-57 rework: migration converts legacy PLAINTEXT invite rows and is idempotent', async () => {
+    const p = await getPayloadSingleton()
+    const { classId } = await seedClassWithInvite(p)
+    const legacyCode = 'LEGACY12'
+    // A pre-hashing row: raw code, as written by the old implementation.
+    await p.db.connection.collection('invites').insertOne({
+      code: legacyCode,
+      classId,
+      ownerId: 'legacy-owner',
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 3_600_000,
+      revoked: false,
+    })
+
+    await migrateInvitesToHashes(p)
+
+    const migrated = await p.db.connection.collection('invites').findOne({ usedBy: null, revoked: false, ownerId: 'legacy-owner' })
+    expect(String(migrated!.code)).toBe(hashInviteCode(legacyCode))
+
+    // Idempotent: a second run leaves the hashed row intact (no double-hash).
+    await migrateInvitesToHashes(p)
+    const again = await p.db.connection.collection('invites').findOne({ ownerId: 'legacy-owner' })
+    expect(String(again!.code)).toBe(hashInviteCode(legacyCode))
+
+    // The legacy code still admits a student after migration.
+    const join = createAtomicJoin({ payload: p, clock: { now: () => Date.now() } })
+    const result = await join.acceptInviteAndCreateStudent(joinInput(legacyCode))
+    expect(result.ok).toBe(true)
   })
 
   it('the (classId, studentId) unique index physically rejects duplicates', async () => {

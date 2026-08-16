@@ -22,4 +22,21 @@ export async function register(): Promise<void> {
       )
     }
   }
+
+  // ECLASS-57: convert any legacy plaintext invite rows to their sha256 form.
+  // Best-effort: a DB-less environment (e.g. some build workers) or a failed
+  // migration logs loudly but does not kill the boot — see invite-migration.ts
+  // for the failure-safety argument.
+  if (process.env.DATABASE_URL) {
+    try {
+      const { getPayload } = await import('payload')
+      const { default: config } = await import('./payload.config')
+      const { migrateInvitesToHashes } = await import('./classes/invite-migration')
+      const payload = await getPayload({ config })
+      const migrated = await migrateInvitesToHashes(payload)
+      if (migrated > 0) console.log(`[instrumentation] invite-code migration: ${migrated} row(s) hashed`)
+    } catch (err) {
+      console.error('[instrumentation] invite-code migration FAILED (legacy invites will not join; mint fresh codes):', err)
+    }
+  }
 }
