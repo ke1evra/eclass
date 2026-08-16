@@ -148,7 +148,7 @@ const makeWorkspaceStore = (): WorkspaceStore & {
         id,
         classId: 'cls-a',
         className: 'A',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
         subjectName: 'Математика',
         examTarget: 'oge',
         ownerId: 'tea-a',
@@ -231,7 +231,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'stu-1', role: 'student' },
         name: 'x',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       expect(created.ok).toBe(false)
       if (!created.ok) expect(created.code).toBe('forbidden')
@@ -241,7 +241,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'tea-1', role: 'teacher' },
         name: 'x',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       expect(created.ok).toBe(true)
     })
@@ -250,7 +250,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'tea-1', role: 'teacher' },
         name: 'a',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       if (!created.ok) throw new Error('setup')
       const rename = await h.classes.renameClass(

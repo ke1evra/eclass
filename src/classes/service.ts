@@ -12,6 +12,7 @@
  */
 import { authorize, type Actor, type Decision } from '@/domain/authorization'
 import type { ClassEntity } from '@/domain/entities'
+import { findSubjectVersion } from '@/content/catalog'
 
 export interface StoredClass extends Omit<ClassEntity, 'inviteCode'> {
   archivedAt: number | null
@@ -68,7 +69,12 @@ export function createClassService(opts: Options) {
       const createDecision = guard(input.actor, 'create', { ownerId: input.actor.id })
       if (!createDecision.allowed) return { ok: false, code: 'forbidden' }
 
-      if (!input.name.trim() || !input.subjectVersionId) {
+      // The subject version must exist in the catalog: a class identity is
+      // reproducible (T2 selects from the list) and the student workspace
+      // derives subjectName/exam from it — free-text ids are refused here, at
+      // the SERVICE layer, so the API route and the UI action are covered by
+      // the same rule (ECLASS-14/56 review finding).
+      if (!input.name.trim() || !findSubjectVersion(input.subjectVersionId)) {
         return { ok: false, code: 'validation_error' }
       }
       const cls = await store.insertClass({

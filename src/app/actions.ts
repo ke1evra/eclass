@@ -21,7 +21,6 @@ import { createAtomicJoin } from '@/classes/atomic-join'
 import { getClassServices } from '@/classes/server'
 import { getPageActor, SESSION_COOKIE } from '@/auth/server'
 import { getStudentWorkspaceService } from '@/students/server'
-import { findSubjectVersion } from '@/content/catalog'
 
 const HOUR_MS = 60 * 60 * 1000
 const SESSION_TTL_MS = 30 * 24 * HOUR_MS
@@ -164,9 +163,9 @@ export async function createClassAction(fd: FormData) {
 
   const name = String(fd.get('name') ?? '').trim()
   const subjectVersionId = String(fd.get('subjectVersionId') ?? '')
-  if (!name || !findSubjectVersion(subjectVersionId)) {
-    redirect('/teacher/classes/new?error=validation_error')
-  }
+  if (!name) redirect('/teacher/classes/new?error=validation_error')
+  // subjectVersionId catalog membership is enforced by the CLASS SERVICE —
+  // one rule for the API route and this UI action (review finding #3).
 
   const payload = await getPayload({ config })
   const { classService } = getClassServices(payload)
