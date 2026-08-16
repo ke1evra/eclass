@@ -5,10 +5,39 @@ import { migrateInvitesToHashes } from '../src/classes/invite-migration'
 import { createAtomicJoin } from '../src/classes/atomic-join'
 
 // ECLASS-56 proof: data created in one process is found in ANOTHER process.
-// Argv: 'create <email>' or 'find <email>'.
+// Argv: 'create <email>' | 'find <email>' | 'class-create <name>' |
+//      'class-find <name>' | 'session-persist/read <sessionId>' |
+//      'rate-hit <key> <n>' | 'rate-check <key>' | 'invite-seed-legacy' |
+//      'invite-migrate' | 'join-legacy <code>'.
+//
+// CI hardening (port of the restart-seed.ts structure): on a cold runner the
+// Payload boot can hit transient Mongo states and die with Node's silent
+// exit 13 (Unfinished Top-Level Await, empty output). This script therefore
+// wraps everything in main() with (a) boot/operation retries on classified
+// transient Mongo errors, (b) a watchdog that force-exits 1 with a visible
+// message if the process has not completed in 90s, and (c) a .catch that
+// prints to stderr and exits 1 — every failure mode is LOUD.
+const main = async (): Promise<void> => {
 const mode = process.argv[2]
 const email = process.argv[3]
-const payload = await getPayload({ config })
+
+const isTransientMongo = (err: unknown): boolean =>
+  /catalog changes|Unable to write to collection|IX lock|Transaction|E11000|WriteConflict|topology|server selection/i.test(
+    String(err instanceof Error ? err.message : err),
+  )
+const withRetry = async <T>(fn: () => Promise<T>, attempts = 5): Promise<T> => {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (i === attempts - 1 || !isTransientMongo(err)) throw err
+      await new Promise((r) => setTimeout(r, 250 * (i + 1)))
+    }
+  }
+  throw new Error('unreachable')
+}
+
+const payload = await withRetry(() => getPayload({ config }))
 
 if (mode === 'create') {
   const u = await payload.create({
@@ -107,4 +136,21 @@ if (mode === 'create') {
   console.log('SESSION_FOUND', found.totalDocs, found.docs[0]?.userId ?? '-')
 }
 
-process.exit(0)
+}
+
+const watchdog = setTimeout(() => {
+  console.error('[restart-persistence] WATCHDOG: not completed in 90s; aborting loudly')
+  process.exit(1)
+}, 90_000)
+watchdog.unref?.()
+
+main()
+  .then(() => {
+    clearTimeout(watchdog)
+    process.exit(0)
+  })
+  .catch((err) => {
+    clearTimeout(watchdog)
+    console.error('[restart-persistence] FAILED:', err instanceof Error ? err.message : err)
+    process.exit(1)
+  })

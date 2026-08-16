@@ -116,7 +116,7 @@ describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exit
     const name = `restart-class-${Date.now()}`
 
     let created: ChildResult | undefined
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       created = await runScript('restart-persistence.ts', ['class-create', name])
       if (created.code === 0 && /CLASS_CREATED/.test(created.stdout)) break
       if (attempt < 3 && isTransient(created)) {
@@ -149,7 +149,7 @@ describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exit
   it('ECLASS-57: TWO PROCESSES migrating legacy invites CONCURRENTLY converge; the raw code still joins', async () => {
     // Seed a legacy plaintext row from a process that exits.
     let seeded: ChildResult | undefined
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       seeded = await runScript('restart-persistence.ts', ['invite-seed-legacy'])
       if (seeded.code === 0 && /LEGACY_SEEDED/.test(seeded.stdout)) break
       if (attempt < 3 && isTransient(seeded)) {
