@@ -112,6 +112,40 @@ const logRetry = (phase: string, attempt: number, r: ChildResult): void => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exits, fresh boot resolves)', () => {
+  it('a class created by a process that has EXITED is found by a freshly booted process (ECLASS-56/14)', async () => {
+    const name = `restart-class-${Date.now()}`
+
+    let created: ChildResult | undefined
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      created = await runScript('restart-persistence.ts', ['class-create', name])
+      if (created.code === 0 && /CLASS_CREATED/.test(created.stdout)) break
+      if (attempt < 3 && isTransient(created)) {
+        logRetry('class-create', attempt, created)
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(created!.code, `class-create output:\n${created!.stdout}\n${created!.stderr}`).toBe(0)
+    expect(created!.stdout).toMatch(/CLASS_CREATED/)
+
+    let found: ChildResult | undefined
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      found = await runScript('restart-persistence.ts', ['class-find', name])
+      if (found.code === 0 && /CLASS_FOUND 1/.test(found.stdout)) break
+      if (attempt < 4 && isTransient(found)) {
+        logRetry('class-find', attempt, found)
+        await sleep(attempt * 1500)
+        continue
+      }
+      break
+    }
+    expect(
+      found!.stdout,
+      `class-find exit=${found!.code}\nstdout:\n${found!.stdout}\nstderr:\n${found!.stderr}`,
+    ).toMatch(/CLASS_FOUND 1/)
+  }, 120_000)
+
   it('a session created by a process that has EXITED resolves in a freshly booted process', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'eclass-restart-'))
     const sessionFile = join(dir, 'session')

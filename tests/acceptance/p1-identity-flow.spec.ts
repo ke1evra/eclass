@@ -39,6 +39,35 @@ async function confirmationToken(login: string): Promise<string> {
 }
 
 test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
+  test('keyboard-only: the critical login flow is operable without a pointer (ECLASS-13/60 R12)', async ({ browser, baseURL }) => {
+    test.setTimeout(120_000)
+
+    // Provision a confirmed teacher through the API + outbox (same as email).
+    const email = `e2e-kbd-${runId}@eclasstest.ru`
+    const api = await pwRequest.newContext({ baseURL })
+    expect((await api.post('/api/auth/signup', { data: { email, password: teacherPassword } })).status()).toBe(200)
+    const token = await confirmationToken(email)
+    expect((await api.post('/api/auth/confirm', { data: { token } })).status()).toBe(200)
+    await api.dispose()
+
+    // From here: KEYBOARD ONLY. Tab reaches every control in a sane order;
+    // Enter submits. No page.mouse, no click().
+    const page = await (await browser.newContext()).newPage()
+    await page.goto('/login')
+
+    await page.keyboard.press('Tab') // #email
+    await expect(page.locator('#email')).toBeFocused()
+    await page.keyboard.type(email)
+    await page.keyboard.press('Tab') // #password
+    await expect(page.locator('#password')).toBeFocused()
+    await page.keyboard.type(teacherPassword)
+    await page.keyboard.press('Tab') // submit
+    await page.keyboard.press('Enter')
+
+    await page.waitForURL('**/teacher')
+    await expect(page.getByRole('heading', { name: 'Кабинет учителя' })).toBeVisible()
+  })
+
   test('A1 → A3 → A4 → confirm → A2 → T1 → T2 → T3 → A7 → S1/S2/A8 → roster; E5 replay rejected', async ({ browser, baseURL }) => {
     test.setTimeout(180_000)
 

@@ -37,6 +37,22 @@ if (mode === 'create') {
     overrideAccess: true,
   })
   console.log('SESSION_CREATED', s.id)
+} else if (mode === 'class-create') {
+  // ECLASS-56/14 restart proof: a class written by THIS process must be
+  // readable by a later, freshly booted process after this one has exited.
+  const c = await payload.create({
+    collection: 'classes',
+    data: { ownerId: 'restart-proof-owner', subjectVersionId: 'math-oge-2026', name: email },
+    overrideAccess: true,
+  })
+  console.log('CLASS_CREATED', c.id)
+} else if (mode === 'class-find') {
+  const found = await payload.find({
+    collection: 'classes',
+    where: { name: { equals: email } },
+    overrideAccess: true,
+  })
+  console.log('CLASS_FOUND', found.totalDocs, found.docs[0]?.id ?? '-')
 } else if (mode === 'session-read') {
   const found = await payload.find({
     collection: 'sessions',
