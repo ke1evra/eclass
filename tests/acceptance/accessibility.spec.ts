@@ -13,7 +13,7 @@ import AxeBuilder from '@axe-core/playwright'
  * canonical rules. We fail on serious+critical only; minor/moderate are
  * reported but tracked separately so a real product can ship while improving.
  */
-const PAGES = ['/', '/about/mvp', '/student', '/login', '/signup', '/signup/pending', '/join']
+const PAGES = ['/', '/about/mvp', '/student', '/login', '/signup', '/signup/pending', '/join', '/reset', '/reset/pending', '/reset/confirm']
 
 for (const path of PAGES) {
   test(`${path} has no serious/critical a11y violations`, async ({ page }) => {

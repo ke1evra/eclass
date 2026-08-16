@@ -15,6 +15,7 @@ import config from '@/payload.config'
 import { createSessionAdapter, issueSession } from '@/auth/session-adapter'
 import { resolveActor } from '@/auth/payload-resolver'
 import { createEmailConfirm } from '@/auth/email-confirm'
+import { createPasswordReset } from '@/auth/password-reset'
 import { isEmailConfigured } from '@/email/transport'
 import { createAtomicJoin } from '@/classes/atomic-join'
 import { getClassServices } from '@/classes/server'
@@ -210,6 +211,56 @@ export async function archiveClassAction(fd: FormData) {
   const result = await classService.archiveClass(actor, classId)
   if (!result.ok) redirect(go(`/teacher/classes/${classId}?error=${result.code}`))
   redirect('/teacher')
+}
+
+/**
+ * A5 — password reset request (ECLASS-69). Always the same redirect: the page
+ * must not reveal whether the email is registered.
+ */
+export async function requestPasswordResetAction(fd: FormData) {
+  const email = String(fd.get('email') ?? '').trim()
+  if (!email) redirect('/login')
+
+  const payload = await getPayload({ config })
+  const service = createPasswordReset({
+    payload,
+    clock: { now: () => Date.now() },
+    ttlMs: 60 * 60 * 1000,
+  })
+  if (isEmailConfigured()) {
+    try {
+      await service.request(email)
+    } catch {
+      // Generic outcome — no enumeration through the redirect either.
+    }
+  }
+  redirect(go('/reset/pending?email=' + encodeURIComponent(email)))
+}
+
+/** A5 confirm: consume the one-time token, set the new password, back to A2. */
+export async function confirmPasswordResetAction(fd: FormData) {
+  const token = String(fd.get('token') ?? '')
+  const password = String(fd.get('password') ?? '')
+  if (!token || password.length < 8) {
+    redirect(go(`/reset/confirm?token=${encodeURIComponent(token)}&error=validation_error`))
+  }
+
+  const payload = await getPayload({ config })
+  const service = createPasswordReset({
+    payload,
+    clock: { now: () => Date.now() },
+    ttlMs: 60 * 60 * 1000,
+  })
+  let result: 'ok' | 'invalid'
+  try {
+    result = await service.confirm(token, password)
+  } catch {
+    redirect(go(`/reset/confirm?token=${encodeURIComponent(token)}&error=error`))
+  }
+  if (result !== 'ok') {
+    redirect(go(`/reset/confirm?token=${encodeURIComponent(token)}&error=invalid_or_expired`))
+  }
+  redirect(go('/login?notice=reset'))
 }
 
 /**

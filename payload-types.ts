@@ -136,6 +136,8 @@ export interface User {
   emailConfirmed?: boolean | null;
   emailConfirmationTokenHash?: string | null;
   emailConfirmationTokenExpiresAt?: number | null;
+  passwordResetTokenHash?: string | null;
+  passwordResetTokenExpiresAt?: number | null;
   blocked?: boolean | null;
   updatedAt: string;
   createdAt: string;
@@ -330,6 +332,8 @@ export interface UsersSelect<T extends boolean = true> {
   emailConfirmed?: T;
   emailConfirmationTokenHash?: T;
   emailConfirmationTokenExpiresAt?: T;
+  passwordResetTokenHash?: T;
+  passwordResetTokenExpiresAt?: T;
   blocked?: T;
   updatedAt?: T;
   createdAt?: T;

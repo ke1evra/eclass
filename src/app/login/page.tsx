@@ -59,6 +59,11 @@ export default async function LoginPage({
       </form>
 
       <p>
+        <Link href="/reset" className="inline">
+          Забыли пароль?
+        </Link>
+      </p>
+      <p>
         Нет аккаунта учителя?{' '}
         <Link href="/signup" className="inline">
           Зарегистрироваться

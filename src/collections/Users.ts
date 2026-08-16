@@ -113,6 +113,24 @@ export const Users: CollectionConfig = {
       access: { update: () => false },
     },
     {
+      // ECLASS-69: SHA-256 hash of the one-time password-reset token. Same
+      // policy as the confirmation hash: raw token never persisted, indexed
+      // (NOT unique — Mongo unique forbids concurrent nulls; uniqueness comes
+      // from 192 bits of entropy), server-only write.
+      name: 'passwordResetTokenHash',
+      type: 'text',
+      index: true,
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
+      // ECLASS-69: epoch-ms when the reset token expires. Server-only.
+      name: 'passwordResetTokenExpiresAt',
+      type: 'number',
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
       // ECLASS-65: a blocked user is treated as anonymous by the resolver —
       // the existing session yields no Actor. Admin/server-only; a user cannot
       // unblock themselves.
