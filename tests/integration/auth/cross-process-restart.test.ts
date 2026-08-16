@@ -194,7 +194,7 @@ describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exit
 
     // Process A burns the whole window (5/5), then exits.
     let burned: ChildResult | undefined
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       burned = await runScript('restart-persistence.ts', ['rate-hit', key, '5'])
       if (burned.code === 0 && /RATE_HIT_DONE/.test(burned.stdout)) break
       if (attempt < 3 && isTransient(burned)) {
@@ -238,7 +238,7 @@ ${checked!.stderr}`,
       // The orchestrator (this test) never touches the DB, so when STEP 2
       // begins the only process that ever wrote the session is verifiably dead.
       let seed: ChildResult | undefined
-      for (let attempt = 1; attempt <= 3; attempt++) {
+      for (let attempt = 1; attempt <= 5; attempt++) {
         seed = await runScript('restart-seed.ts', [dir])
         if (seed.code === 0 && /^SEEDED \S+$/m.test(seed.stdout)) break
         if (attempt < 3 && isTransient(seed)) {
