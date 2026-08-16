@@ -179,9 +179,13 @@ test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
     await expect(replay.getByText(/код уже использован/i)).toBeVisible()
     await replayCtx.close()
 
-    // Teacher logout → A1.
+    // Teacher logout → A1. Anonymous /teacher afterwards redirects to A2 with
+    // the auth notice (session-expired/anonymous recovery at the UI level).
     await page.getByRole('button', { name: /выйти/i }).click()
     await page.waitForURL(/\/$/)
+    await page.goto('/teacher')
+    await page.waitForURL('**/login?notice=auth')
+    await expect(page.getByText('Нужен вход учителя.')).toBeVisible()
     await teacherCtx.close()
     await studentCtx.close()
   })
