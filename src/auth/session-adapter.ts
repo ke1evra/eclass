@@ -47,9 +47,9 @@ export interface LoginResult {
 
 export interface LoginError {
   ok: false
-  // NOTE: `rate_limited` is intentionally absent — rate limiting is not yet
-  // wired (TODO ECLASS-59). The contract will gain that variant when ECLASS-59
-  // ships an actual limiter; declaring it now would be a false contract.
+  // NOTE: `rate_limited` lives at the ROUTE layer (ECLASS-59): the shared
+  // Mongo sliding-window limiter runs before credential verification, so this
+  // adapter-level result never carries it — the route answers 429 itself.
   code: 'invalid_credentials' | 'email_not_confirmed'
 }
 

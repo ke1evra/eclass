@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getPayload } from 'payload'
 import config from '@/payload.config'
 import { createEmailConfirm } from '@/auth/email-confirm'
+import { enforceRateLimit, RESEND_RATE } from '@/auth/rate-limit'
 import { isEmailConfigured } from '@/email/transport'
 
 /**
@@ -32,6 +33,23 @@ export async function POST(req: NextRequest) {
   }
 
   const payload = await getPayload({ config })
+
+  // Resend mints fresh bearer tokens — meter it harder than login (ECLASS-59).
+  // Unlike login/signup, a limiter failure must NOT change the response shape
+  // (enumeration), so the fail-closed path is the generic 200-without-send.
+  try {
+    const limited = await enforceRateLimit({
+      payload,
+      headers: req.headers,
+      bucket: 'resend',
+      policy: RESEND_RATE,
+      account: body.email,
+    })
+    if (limited) return NextResponse.json({ ok: true })
+  } catch {
+    return NextResponse.json({ ok: true })
+  }
+
   const emailConfirm = createEmailConfirm({
     payload,
     clock: { now: () => Date.now() },

@@ -13,7 +13,7 @@
  *   - email must be confirmed before login issues a session;
  *   - repeated failed logins are rate-limited per email.
  */
-import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
+import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto'
 
 export interface Clock {
   now(): number
@@ -88,23 +88,55 @@ const DEFAULT_RATE_WINDOW_MS = 15 * 60 * 1000
 const SCRYPT_KEYLEN = 32
 
 /**
- * Per-user salted password hashing (CB-5). Uses scrypt (available in Node
- * core, no native deps) with a unique random salt per user. The stored string
- * is `saltHex$hashHex` so verification can re-derive with the same salt.
+ * Per-user salted password hashing (CB-5, hardened in ECLASS-59). scrypt with
+ * a unique random salt per user, ASYNC — the synchronous variant blocked the
+ * event loop on every login (ECLASS-59 acceptance). The stored string is
+ * versioned — `scrypt-1$<N>$<r>$<p>$saltHex$hashHex` — so parameters can be
+ * raised later without invalidating existing hashes: verify() reads the
+ * version and dispatches to the matching derivation.
  */
-const hashPassword = (password: string, saltHex?: string): string => {
-  const salt = saltHex ? Buffer.from(saltHex, 'hex') : randomBytes(16)
-  const hash = scryptSync(password, salt, SCRYPT_KEYLEN)
-  return `${salt.toString('hex')}$${hash.toString('hex')}`
+const SCRYPT_PARAMS = { N: 16_384, r: 8, p: 1 } as const
+const SCRYPT_VERSION = `scrypt-1`
+
+const scryptAsync = (password: string, salt: Buffer, keylen: number): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    scrypt(password, salt, keylen, { N: SCRYPT_PARAMS.N, r: SCRYPT_PARAMS.r, p: SCRYPT_PARAMS.p }, (err, derived) =>
+      err ? reject(err) : resolve(derived),
+    )
+  })
+
+const hashPassword = async (password: string): Promise<string> => {
+  const salt = randomBytes(16)
+  const hash = await scryptAsync(password, salt, SCRYPT_KEYLEN)
+  return `${SCRYPT_VERSION}$${SCRYPT_PARAMS.N}$${SCRYPT_PARAMS.r}$${SCRYPT_PARAMS.p}$${salt.toString('hex')}$${hash.toString('hex')}`
 }
 
-const verifyPassword = (password: string, stored: string): boolean => {
-  const [saltHex, hashHex] = stored.split('$')
-  if (!saltHex || !hashHex) return false
-  const computed = scryptSync(password, Buffer.from(saltHex, 'hex'), SCRYPT_KEYLEN)
+const verifyPassword = async (password: string, stored: string): Promise<boolean> => {
+  const parts = stored.split('$')
+  // Legacy unversioned format `saltHex$hashHex` (default params).
+  if (parts.length === 2) {
+    const [saltHex, hashHex] = parts
+    const computed = await new Promise<Buffer>((resolve, reject) => {
+      scrypt(password, Buffer.from(saltHex!, 'hex'), SCRYPT_KEYLEN, (err, d) =>
+        err ? reject(err) : resolve(d),
+      )
+    })
+    const expected = Buffer.from(hashHex!, 'hex')
+    return computed.length === expected.length && timingSafeEqual(computed, expected)
+  }
+  const [version, nHex, rHex, pHex, saltHex, hashHex] = parts
+  if (version !== SCRYPT_VERSION || !nHex || !rHex || !pHex || !saltHex || !hashHex) return false
+  const computed = await new Promise<Buffer>((resolve, reject) => {
+    scrypt(
+      password,
+      Buffer.from(saltHex, 'hex'),
+      SCRYPT_KEYLEN,
+      { N: Number(nHex), r: Number(rHex), p: Number(pHex) },
+      (err, d) => (err ? reject(err) : resolve(d)),
+    )
+  })
   const expected = Buffer.from(hashHex, 'hex')
-  if (computed.length !== expected.length) return false
-  return timingSafeEqual(computed, expected)
+  return computed.length === expected.length && timingSafeEqual(computed, expected)
 }
 
 export function createAuthService(opts: Options): AuthService {
@@ -148,7 +180,7 @@ export function createAuthService(opts: Options): AuthService {
       const user: StoredUser = {
         id: `tea-${randomBytes(6).toString('hex')}`,
         email,
-        passwordHash: hashPassword(password),
+        passwordHash: await hashPassword(password),
         emailConfirmed: false,
       }
       await store.insertUser(user)
@@ -172,7 +204,7 @@ export function createAuthService(opts: Options): AuthService {
 
       const user = await store.findUserByEmail(email)
       // SAME failure code whether user is missing OR password is wrong.
-      const passwordOk = user ? verifyPassword(password, user.passwordHash) : false
+      const passwordOk = user ? await verifyPassword(password, user.passwordHash) : false
       if (!user || !passwordOk) {
         recordFailure(email)
         return { ok: false, code: 'invalid_credentials' }
