@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect, it } from 'vitest'
-import { integrationSuite } from '../_payload'
+import { describe, expect, it } from 'vitest'
+import { hasMongo } from '../_payload'
 
 /**
  * ECLASS-65 — GENUINE cross-process restart proof.
@@ -21,11 +21,12 @@ import { integrationSuite } from '../_payload'
  * Payload singleton) alive while the child resolved — which only proved
  * two-process visibility of one Mongo, not survival of the creator stopping.
  *
- * CI flakiness handling: `npx tsx` cold start on a freshly-booted runner
- * intermittently exits early (observed: empty stdout/stderr, exit 13 — Node's
- * "Unfinished Top-Level Await" when Payload boot never settles). The scripts
- * now make such failures VISIBLE (stderr + watchdog, see restart-seed.ts).
- * The orchestrator retries only classified transient outcomes: a Mongo
+ * CI flakiness handling: on a freshly-booted runner the children intermittently
+ * exit early (observed: empty stdout/stderr, exit 13). IMPORTANT: this happens
+ * BEFORE the script's own handlers engage — main().catch and the watchdog
+ * never print anything for these exits, so the failures are NOT made visible
+ * by them; the in-script handlers only cover failures after boot starts.
+ * The orchestrator therefore retries classified transient outcomes: a Mongo
  * transient error string, or empty output + nonzero exit (process never ran
  * meaningfully). Anything else fails immediately with full output.
  *
@@ -33,6 +34,18 @@ import { integrationSuite } from '../_payload'
  * lives only in a 0600 temp file, is read by the orchestrator solely for the
  * non-leak assertion, and is removed in finally. Children print only the
  * userId + role.
+ *
+ * NO PAYLOAD IN THE PARENT: this suite deliberately uses describe.skipIf
+ * instead of `integrationSuite` — integrationSuite's beforeAll boots a
+ * Payload singleton, which would make the parent a DB-connected process and
+ * the "orchestrator" claim false. The parent never loads Payload here.
+ *
+ * INVOCATION: children run via `node --import tsx <script>` — NOT via npx.
+ * The silent empty-output exit-13 failures observed on CI happen before the
+ * script's own error handling engages (main().catch / watchdog never print),
+ * pointing at the npx resolution layer — a hypothesis, not a proven cause.
+ * Removing npx eliminates that layer; whether the failures disappear is
+ * observed in CI, not asserted here.
  */
 interface ChildResult {
   code: number
@@ -42,10 +55,11 @@ interface ChildResult {
 
 async function runScript(script: string, args: string[], timeoutMs = 30_000): Promise<ChildResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn('npx', ['tsx', `scripts/${script}`, ...args], {
-      env: { ...process.env },
-      cwd: process.cwd(),
-    })
+    const child = spawn(
+      process.execPath,
+      ['--import', 'tsx', join(process.cwd(), 'scripts', script), ...args],
+      { env: { ...process.env }, cwd: process.cwd() },
+    )
     let stdout = ''
     let stderr = ''
     child.stdout.on('data', (d) => {
@@ -97,7 +111,7 @@ const logRetry = (phase: string, attempt: number, r: ChildResult): void => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
-integrationSuite('ECLASS-65: cross-process restart proof (creator exits, fresh boot resolves)', () => {
+describe.skipIf(!hasMongo)('ECLASS-65: cross-process restart proof (creator exits, fresh boot resolves)', () => {
   it('a session created by a process that has EXITED resolves in a freshly booted process', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'eclass-restart-'))
     const sessionFile = join(dir, 'session')
