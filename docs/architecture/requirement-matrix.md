@@ -39,6 +39,8 @@
 | **R14** Критический P1-поток A1→T3→A7→S1 без skip | Journey Map, A1–A8, T1–T3, S1–S2 | ECLASS-2/56 | `tests/acceptance/p1-identity-flow.spec.ts` (без skip; mobile 390px) | `e2e` job | Acceptance proven |
 | **R15** Перезапуск процесса не теряет данные (сессии и классы) | — | ECLASS-65/56/14 | `cross-process-restart.test.ts` (создатель завершается, свежий процесс читает) | `quality` job | Acceptance proven |
 | **R16** Submit идемпотентен и устойчив к обрыву сети | S5, S6, E6 | ECLASS-29 | (план) Mongo transaction + network emulation | `e2e` job | Pending (ECLASS-29) |
+| **R17** Email outbox: sealed токены at rest, атомарный claim+lease, реальный backoff, job-first resend, SMTP+cron | A4, A5 | ECLASS-68 | `tests/integration/auth/email-outbox.test.ts` + `tests/unit/email/crypto-smtp.test.ts` | `quality` job | Acceptance proven (live-SMTP круг — опционально по DoD) |
+| **R18** Password reset: анти-enumeration, single-use токен, отзыв всех сессий | A2, A4, A5, E4 | ECLASS-69 | `tests/integration/auth/password-reset.test.ts` + `tests/acceptance/password-reset-flow.spec.ts` | `quality` + `e2e` | Acceptance proven |
 
 ## Правила доказательства (CI-enforced)
 
