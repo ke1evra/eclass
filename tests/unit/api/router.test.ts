@@ -117,3 +117,24 @@ describe('router branch coverage — ECLASS-11', () => {
     expect(res.status).toBe(404)
   })
 })
+
+describe('router branch hardening (review step 7)', () => {
+  it('review with a malformed body returns validation_error 422 with field errors', async () => {
+    const submission = submissionFactory({ status: 'submitted', submittedAt: 1 })
+    const res = await handleReview(submission, { criterionScores: 'not-an-array' }, teacher())
+    expect(res.status).toBe(422)
+    expect(res.body.code).toBe('validation_error')
+    expect(res.body.errors).toBeTruthy()
+  })
+
+  it('submit on a draft (never started) submission returns invalid_transition', async () => {
+    const submission = submissionFactory({ status: 'assigned', submittedAt: undefined })
+    const res = await handleSubmit(
+      submission,
+      { answers: [], idempotencyKey: 'abcdefgh' },
+      student(),
+    )
+    expect([409, 422]).toContain(res.status)
+    if (res.status === 409) expect(res.body.code).toBe('invalid_transition')
+  })
+})

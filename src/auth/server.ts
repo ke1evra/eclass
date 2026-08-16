@@ -1,32 +1,52 @@
 /**
- * Server-side wiring for auth — CB-4 (ECLASS-51).
+ * Server-side auth wiring for pages — ECLASS-56 (Stage B) / ECLASS-13 (E8).
  *
- * Provides a singleton session resolver backed by an in-memory store for the
- * skeleton. The real Payload-backed session store replaces this without
- * touching call sites. Crucially, NO identity is ever read from a URL — only
- * from the cookie via resolveSession().
+ * Payload/MongoDB is the ONLY session authority at the application boundary:
+ * the opaque `eclass_session` cookie resolves through resolveActor (Sessions
+ * row → Users row). The previous Map-backed resolver is gone from the
+ * production path — restarts no longer log anyone out.
+ *
+ * E8 distinction (review fix): a request WITHOUT a cookie is anonymous (A2
+ * notice=auth); a request WITH a cookie that no longer resolves — expired,
+ * revoked, forged — is a DEAD session and pages send the user to A2 with
+ * notice=expired («Сессия истекла — войдите снова»). Before the fix both
+ * landed on the generic auth notice and E8 was unreachable.
  */
-import { createSessionResolver, type SessionStore } from './session'
+import { cookies } from 'next/headers'
+import { getPayload } from 'payload'
+import type { Actor } from '@/domain/authorization'
+import config from '@/payload.config'
+import { resolveActor } from './payload-resolver'
+import { SESSION_COOKIE } from './route-actor'
 
-let cached: ReturnType<typeof createSessionResolver> | null = null
+export { SESSION_COOKIE }
 
-const buildStore = (): SessionStore => {
-  const sessions = new Map<string, { userId: string; role: 'teacher' | 'student'; expiresAt: number; revoked: boolean }>()
-  return {
-    async getSession(id) {
-      return sessions.get(id)
-    },
-  }
+export type SessionState = 'ok' | 'anonymous' | 'dead'
+
+export interface PageAuth {
+  actor: Actor | null
+  sessionState: SessionState
 }
 
-export const SESSION_COOKIE = 'eclass_session'
+/**
+ * Resolve the page-level actor from the request cookies. `dead` means the
+ * browser PRESENTED a session cookie that no longer resolves (expired,
+ * revoked, forged or unknown) — the E8 state. Re-throws infrastructure errors
+ * (they must surface as 5xx, not silently log the user out).
+ */
+export async function getPageAuth(): Promise<PageAuth> {
+  const cookieStore = await cookies()
+  const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+  if (!sessionId) return { actor: null, sessionState: 'anonymous' }
 
-export function getSessionResolver() {
-  if (!cached) {
-    cached = createSessionResolver({
-      store: buildStore(),
-      clock: { now: () => Date.now() },
-    })
-  }
-  return cached
+  const payload = await getPayload({ config })
+  const actor = await resolveActor(payload, sessionId, { now: () => Date.now() })
+  return actor
+    ? { actor, sessionState: 'ok' }
+    : { actor: null, sessionState: 'dead' }
+}
+
+/** Convenience for call sites that only need the actor. */
+export async function getPageActor(): Promise<Actor | null> {
+  return (await getPageAuth()).actor
 }

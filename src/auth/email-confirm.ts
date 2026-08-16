@@ -37,6 +37,7 @@
  */
 import type { Payload } from 'payload'
 import { randomBytes, createHash } from 'node:crypto'
+import { sealEmailBody } from '@/email/crypto'
 
 export interface Clock {
   now(): number
@@ -126,7 +127,9 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
           userId: user.id,
           to: input.email,
           subject: CONFIRM_SUBJECT,
-          body: confirmLink(token),
+          // ECLASS-68: the raw token is SEALED (AES-256-GCM) — plaintext
+          // exists only in memory and inside the email itself.
+          body: sealEmailBody(confirmLink(token)),
           status: 'pending',
           attempts: 0,
           createdAt: now,
@@ -136,12 +139,15 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
     } catch (err) {
       // Compensate: the user was created but the deliverable link was not.
       // Delete the user so a retry with the same email is clean (no E11000)
-      // and no half-state persists. A failure here would leave a stranded
-      // user — surface it to the caller as the original error.
+      // and no half-state persists. A failure HERE would leave a stranded
+      // user — it is LOGGED (defect 4) and the original error still surfaces.
       try {
         await payload.delete({ collection: 'users', id: user.id, overrideAccess: true })
-      } catch {
-        // Best-effort; the original error is the meaningful one.
+      } catch (cleanupErr) {
+        console.error(
+          '[signup] compensating user-delete FAILED — stranded user possible:',
+          cleanupErr,
+        )
       }
       throw err
     }
@@ -168,6 +174,13 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
      * queue a fresh email-job. Used by `/api/auth/resend`. Returns false (no
      * such unconfirmed user) so the caller can return a generic 200 without
      * leaking which emails are registered.
+     *
+     * ATOMICITY (defect 5, ECLASS-68): the job is created FIRST (it does not
+     * depend on the user row's hash fields), THEN the user's hash is updated.
+     * If the update fails, the job is compensating-DELETED — the OLD token
+     * stays valid and no orphan job with an undeliverable token remains. The
+     * inverse order (update-then-create) would invalidate the old token with
+     * no way to deliver the new one.
      */
     async resend(email: string): Promise<boolean> {
       const found = await payload.find({
@@ -183,37 +196,66 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
       const expiresAt = clock.now() + ttlMs
       const now = clock.now()
 
-      await payload.update({
-        collection: 'users',
-        id: user.id,
-        data: { emailConfirmationTokenHash: hash, emailConfirmationTokenExpiresAt: expiresAt },
-        overrideAccess: true,
-      })
-      await payload.create({
-        collection: 'email-jobs',
-        data: {
-          userId: user.id,
-          to: user.email,
-          subject: CONFIRM_SUBJECT,
-          body: confirmLink(token),
-          status: 'pending',
-          attempts: 0,
-          createdAt: now,
-        },
-        overrideAccess: true,
-      })
+      let job: { id: string } | undefined
+      try {
+        job = (await payload.create({
+          collection: 'email-jobs',
+          data: {
+            userId: user.id,
+            to: user.email,
+            subject: CONFIRM_SUBJECT,
+            body: sealEmailBody(confirmLink(token)),
+            status: 'pending',
+            attempts: 0,
+            createdAt: now,
+          },
+          overrideAccess: true,
+        })) as unknown as { id: string }
+      } catch (err) {
+        console.error('[resend] email-job create failed; user state untouched:', err)
+        throw err
+      }
+
+      try {
+        await payload.update({
+          collection: 'users',
+          id: user.id,
+          data: { emailConfirmationTokenHash: hash, emailConfirmationTokenExpiresAt: expiresAt },
+          overrideAccess: true,
+        })
+      } catch (err) {
+        // Compensating delete: the job carries a token nobody can consume.
+        try {
+          await payload.delete({ collection: 'email-jobs', id: job.id, overrideAccess: true })
+        } catch (cleanupErr) {
+          console.error(
+            '[resend] compensating email-job delete FAILED — undeliverable job possible:',
+            cleanupErr,
+          )
+        }
+        throw err
+      }
       return true
     },
 
     /**
-     * Consume a confirmation token. Atomic conditional update-by-where on
-     * (hash, !confirmed, !expired); single-use (the update nulls the hash).
+     * Consume a confirmation token. SINGLE-DOCUMENT ATOMIC conditional
+     * updateOne on (hash, !confirmed, !expired); single-use (the update nulls
+     * the hash).
      *
-     * Deterministic under concurrency: a WriteConflict / TransientTransaction
-     * error is retried up to 3 times. By the retry, the winner has nulled the
-     * hash, so the loser matches zero docs → 'invalid'. Result is always
-     * exactly one 'ok' (the winner) and 'invalid' for every loser — never a
-     * thrown error leaking the race to the client as 503.
+     * Why a raw updateOne and NOT payload.update({ where }): db-mongodb's
+     * update-by-where with a limit is find-then-update-by-ids — the where is
+     * NOT re-checked inside the write. Two concurrent confirms both read the
+     * still-unconfirmed doc and both "succeed" (observed as [200, 200]; the
+     * concurrent-confirm integration test catches exactly this). A raw
+     * conditional updateOne makes the check-and-set one atomic Mongo
+     * operation: exactly one caller matches, every loser gets matchedCount 0
+     * → 'invalid'.
+     *
+     * Payload hooks are intentionally bypassed: this write touches only the
+     * confirmation fields, not role/email (the Users beforeChange hook exists
+     * to freeze those for clients — a Local API call with overrideAccess is
+     * the trusted server path either way).
      *
      * Returns 'ok' on match, 'invalid' for any non-match (wrong/expired/
      * replayed/unknown — collapsed for anti-enumeration). Real infrastructure
@@ -223,21 +265,22 @@ export function createEmailConfirm(opts: EmailConfirmOptions) {
       const hash = sha256hex(rawToken)
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const updated = await payload.update({
-            collection: 'users',
-            where: {
-              emailConfirmationTokenHash: { equals: hash },
-              emailConfirmed: { equals: false },
-              emailConfirmationTokenExpiresAt: { greater_than: clock.now() },
+          const result = await payload.db.connection.collection('users').updateOne(
+            {
+              emailConfirmationTokenHash: hash,
+              emailConfirmed: false,
+              emailConfirmationTokenExpiresAt: { $gt: clock.now() },
             },
-            data: {
-              emailConfirmed: true,
-              emailConfirmationTokenHash: null,
-              emailConfirmationTokenExpiresAt: null,
+            {
+              $set: {
+                emailConfirmed: true,
+                emailConfirmationTokenHash: null,
+                emailConfirmationTokenExpiresAt: null,
+                updatedAt: new Date(),
+              },
             },
-            overrideAccess: true,
-          })
-          return updated.docs.length > 0 ? 'ok' : 'invalid'
+          )
+          return result.matchedCount === 1 ? 'ok' : 'invalid'
         } catch (err) {
           if (isTransientWriteConflict(err) && attempt < 3) continue
           throw err

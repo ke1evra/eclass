@@ -63,8 +63,10 @@ const makeClassStore = (): ClassStore => {
   const rosters = new Map<string, Set<string>>()
   return {
     async insertClass(c) {
-      classes.set(c.id, c)
-      rosters.set(c.id, new Set())
+      const stored = { ...c, id: `cls-${classes.size + 1}` }
+      classes.set(stored.id, stored)
+      rosters.set(stored.id, new Set())
+      return stored
     },
     async getClass(id) {
       return classes.get(id)
@@ -146,7 +148,7 @@ const makeWorkspaceStore = (): WorkspaceStore & {
         id,
         classId: 'cls-a',
         className: 'A',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
         subjectName: 'Математика',
         examTarget: 'oge',
         ownerId: 'tea-a',
@@ -192,7 +194,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
 
   describe('IDOR — cross-tenant resource access is blocked', () => {
     it('teacher B cannot read or mutate teacher A’s class', async () => {
-      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 'math-oge-2026' })
       if (!a.ok) throw new Error('setup')
       const read = await h.classes.getClass({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(read.ok).toBe(false)
@@ -205,7 +207,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
     })
 
     it('teacher B cannot add a student to teacher A’s class', async () => {
-      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 'math-oge-2026' })
       if (!a.ok) throw new Error('setup')
       const add = await h.classes.addStudent({ id: 'tea-b', role: 'teacher' }, a.class.id, 'stu-x')
       expect(add.ok).toBe(false)
@@ -213,7 +215,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
     })
 
     it('teacher B cannot create an invite for teacher A’s class', async () => {
-      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 'math-oge-2026' })
       if (!a.ok) throw new Error('setup')
       const inv = await h.invites.createInvite({ id: 'tea-b', role: 'teacher' }, a.class.id)
       expect(inv.ok).toBe(false)
@@ -229,7 +231,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'stu-1', role: 'student' },
         name: 'x',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       expect(created.ok).toBe(false)
       if (!created.ok) expect(created.code).toBe('forbidden')
@@ -239,7 +241,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'tea-1', role: 'teacher' },
         name: 'x',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       expect(created.ok).toBe(true)
     })
@@ -248,7 +250,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
       const created = await h.classes.createClass({
         actor: { id: 'tea-1', role: 'teacher' },
         name: 'a',
-        subjectVersionId: 's',
+        subjectVersionId: 'math-oge-2026',
       })
       if (!created.ok) throw new Error('setup')
       const rename = await h.classes.renameClass(
@@ -263,7 +265,7 @@ describe('tenant isolation & auth-контур — ECLASS-17', () => {
 
   describe('invite replay protection', () => {
     it('a used invite cannot join a second student', async () => {
-      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 's' })
+      const a = await h.classes.createClass({ actor: { id: 'tea-a', role: 'teacher' }, name: 'A', subjectVersionId: 'math-oge-2026' })
       if (!a.ok) throw new Error('setup')
       const inv = await h.invites.createInvite({ id: 'tea-a', role: 'teacher' }, a.class.id)
       if (!inv.ok) throw new Error('invite')

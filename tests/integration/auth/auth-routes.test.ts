@@ -13,6 +13,7 @@ import {
   type EmailTransport,
 } from '@/email/transport'
 import { runEmailWorker } from '@/auth/email-worker'
+import { SESSION_TTL_MS } from '@/auth/session-ttl'
 
 /**
  * ECLASS-65 — route-boundary integration test (audit block 1 + 3, and the five
@@ -144,7 +145,7 @@ integrationSuite('ECLASS-65: auth route boundary (handlers end-to-end)', () => {
     expect(sc).toMatch(/Secure/i)
     expect(sc).toMatch(/SameSite=Lax/i)
     expect(sc).toMatch(/Path=\/(;|$)/i)
-    expect(sc).toMatch(/Max-Age=3600/i)
+    expect(sc).toMatch(new RegExp(`Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`, 'i'))
 
     const token = sessionIdFromCookie(sc)
     // The opaque cookie value must NOT be the userId, the password, or a JWT.

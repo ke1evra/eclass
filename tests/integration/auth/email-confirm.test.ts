@@ -8,6 +8,7 @@ import { POST as signupRoute } from '@/app/api/auth/signup/route'
 import { POST as confirmRoute } from '@/app/api/auth/confirm/route'
 import { POST as resendRoute } from '@/app/api/auth/resend/route'
 import { runEmailWorker, scrubError } from '@/auth/email-worker'
+import { openEmailBody } from '@/email/crypto'
 import { handleLogin } from '@/app/api/auth/login/handler'
 import {
   loggingTransport,
@@ -236,16 +237,37 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     const email = uniqueEmail('boom')
     const { token } = await signUpAndDeliver(p, email, 'longpass123', outbox)
 
-    // Wrap the payload so update() rejects with a 503 — the route handler must
-    // surface HTTP 503, not collapse it to 400 invalid_or_expired.
+    // Wrap the payload so the atomic users.updateOne rejects — the route
+    // handler must surface HTTP 503, not collapse it to 400 invalid_or_expired.
     const boom: Error & { status?: number } = Object.assign(new Error('connection refused'), {
       status: 503,
     })
     const throwingPayload = new Proxy(p as unknown as Record<string | symbol, unknown>, {
       get(target, prop) {
-        if (prop === 'update') return async () => Promise.reject(boom)
-        const value = target[prop as symbol]
-        return typeof value === 'function' ? value.bind(p) : value
+        if (prop !== 'db') return Reflect.get(target, prop)
+        const db = target.db as unknown as Record<string, unknown>
+        return new Proxy(db, {
+          get(dbTarget, dbProp) {
+            if (dbProp !== 'connection') return Reflect.get(dbTarget, dbProp)
+            const conn = dbTarget.connection as unknown as Record<string, unknown>
+            return new Proxy(conn, {
+              get(connTarget, connProp) {
+                if (connProp !== 'collection') return Reflect.get(connTarget, connProp)
+                const orig = (connTarget.collection as (n: string) => unknown).bind(connTarget)
+                return (name: string) => {
+                  if (name !== 'users') return orig(name)
+                  return new Proxy(orig(name) as object, {
+                    get(collTarget, collProp) {
+                      if (collProp === 'updateOne') return async () => Promise.reject(boom)
+                      const v = Reflect.get(collTarget, collProp)
+                      return typeof v === 'function' ? v.bind(collTarget) : v
+                    },
+                  })
+                }
+              },
+            })
+          },
+        })
       },
     }) as unknown as Payload
 
@@ -362,16 +384,27 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     const email = uniqueEmail('flake')
     await signupRoute(jsonReq('http://localhost/api/auth/signup', { email, password: 'longpass123' }))
 
-    // Run 1: first attempt fails → attempts=1, status stays pending.
-    await runEmailWorker({ payload: p, transport: flake, clock: { now: () => Date.now() } })
-    // Run 2: second attempt fails → attempts=2, status stays pending.
-    await runEmailWorker({ payload: p, transport: flake, clock: { now: () => Date.now() } })
-    // Run 3: transport now succeeds → status=sent.
-    const result3 = await runEmailWorker({
-      payload: p,
-      transport: flake,
-      clock: { now: () => Date.now() },
-    })
+    // ECLASS-68: backoff is REAL now — a failing attempt pushes nextAttemptAt
+    // into the future, so an immediate re-run must SKIP the job. The clock is
+    // advanced past each backoff before the next attempt.
+    let t = Date.now()
+    const clock = { now: () => t }
+
+    // Run 1: first attempt fails → attempts=1, pending with future nextAttemptAt.
+    const r1 = await runEmailWorker({ payload: p, transport: flake, clock })
+    expect(r1.sent).toBe(0)
+    // Immediate re-run: not due → skipped, NOT retried.
+    const r1b = await runEmailWorker({ payload: p, transport: flake, clock })
+    expect(r1b.processed).toBe(0)
+
+    // Advance past 2^1*base, run 2: second attempt fails → attempts=2, pending.
+    t += 2 ** 1 * 5_000 + 1
+    const r2 = await runEmailWorker({ payload: p, transport: flake, clock })
+    expect(r2.sent).toBe(0)
+
+    // Advance past 2^2*base, run 3: transport now succeeds → status=sent.
+    t += 2 ** 2 * 5_000 + 1
+    const result3 = await runEmailWorker({ payload: p, transport: flake, clock })
     expect(result3.sent).toBe(1)
 
     const jobs = await p.find({
@@ -385,15 +418,31 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
     expect(job.sentAt).toBeTypeOf('number')
   })
 
-  it('worker marks a job failed after maxAttempts; lastError is scrubbed (no token)', async () => {
+  it('worker marks a job failed after maxAttempts; lastError scrubbed; body consumed', async () => {
     const p = await getPayloadSingleton()
     const failing = new FailingTransport('persistent smtp down')
     const email = uniqueEmail('permfail')
     await signupRoute(jsonReq('http://localhost/api/auth/signup', { email, password: 'longpass123' }))
 
-    // Run the worker maxAttempts times (default 5).
+    // Capture the sealed body BEFORE any attempt, open it, and prove the raw
+    // token is neither in the stored body nor in lastError after failure.
+    const before = await p.find({
+      collection: 'email-jobs',
+      where: { to: { equals: email } },
+      overrideAccess: true,
+    })
+    const sealed = (before.docs[0] as unknown as { body: string }).body
+    expect(sealed.startsWith('v1:'), 'body must be sealed at rest').toBe(true)
+    const rawToken = openEmailBody(sealed).match(/token=([A-Za-z0-9_-]+)/)?.[1] ?? ''
+    expect(rawToken.length).toBeGreaterThan(10)
+    expect(sealed).not.toContain(rawToken)
+
+    // Run the worker maxAttempts times, advancing the clock past each backoff.
+    let t = Date.now()
+    const clock = { now: () => t }
     for (let i = 0; i < 5; i++) {
-      await runEmailWorker({ payload: p, transport: failing, clock: { now: () => Date.now() } })
+      await runEmailWorker({ payload: p, transport: failing, clock })
+      t += 2 ** (i + 1) * 5_000 + 1
     }
 
     const jobs = await p.find({
@@ -405,14 +454,15 @@ integrationSuite('ECLASS-67 v2: email-token confirm flow (outbox + worker)', () 
       status: string
       attempts: number
       lastError?: string
-      body: string
+      body?: string | null
     }
     expect(job.status).toBe('failed')
     expect(job.attempts).toBe(5)
     // lastError carries the transport message, NOT the raw token from body.
     expect(job.lastError).toContain('persistent smtp down')
-    const rawToken = job.body.match(/token=([A-Za-z0-9_-]+)/)?.[1] ?? ''
     expect(job.lastError).not.toContain(rawToken)
+    // ECLASS-68 (defect 1): terminal failure CONSUMES the sealed body.
+    expect(job.body ?? null).toBeNull()
     // And scrubError strips any long base64url run defensively.
     expect(scrubError(new Error(rawToken))).not.toContain(rawToken)
   })

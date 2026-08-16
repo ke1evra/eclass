@@ -29,3 +29,123 @@ ul.needs li { margin: 0.4rem 0; color: var(--muted); }
 
 dl.kpis dt { font-weight: 600; margin-top: 0.6rem; }
 dl.kpis dd { margin: 0 0 0.25rem; color: var(--muted); }
+
+/* --- App shell: A/T/S screens (ECLASS-56 Stage C) ----------------------- */
+
+:root {
+  --line: #e2e8f0;
+  --accent: #1d4ed8;
+  --accent-fg: #ffffff;
+  --danger: #b91c1c;
+}
+
+main.page { max-width: 60rem; }
+main.page-narrow { max-width: 28rem; }
+
+.lead { color: var(--muted); }
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 1rem 0;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+button, .button {
+  display: inline-block;
+  min-height: 44px;
+  padding: 0.55rem 1.1rem;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+button.ghost, a.button.ghost {
+  background: transparent;
+  color: var(--accent);
+}
+
+button.danger {
+  background: transparent;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+a.inline { color: var(--accent); }
+
+.form label { display: block; margin: 0.9rem 0 0.25rem; font-weight: 600; }
+.form input, .form select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.form button { margin-top: 1.1rem; }
+
+.inline-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0.6rem 0;
+}
+.inline-form input {
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  flex: 1 1 14rem;
+}
+
+.error { color: var(--danger); }
+.notice { color: #166534; }
+
+.role-list { list-style: none; padding: 0; }
+.role-list li { margin: 1rem 0; }
+.role-list .button { width: 100%; }
+
+ol.steps { padding-left: 1.2rem; }
+ol.steps li { margin: 0.4rem 0; }
+
+.class-list { list-style: none; padding: 0; }
+.class-card { padding: 0.75rem 1rem; }
+.class-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: inherit;
+  text-decoration: none;
+}
+.class-link:hover strong { text-decoration: underline; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 400px) {
+  main { padding: 1.25rem 0.9rem 3rem; }
+}
+

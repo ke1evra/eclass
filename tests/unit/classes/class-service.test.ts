@@ -19,8 +19,10 @@ const makeStore = (): ClassStore => {
   const memberships = new Map<string, Set<string>>()
   return {
     async insertClass(c) {
-      classes.set(c.id, c)
-      memberships.set(c.id, new Set())
+      const stored = { ...c, id: `cls-${classes.size + 1}` }
+      classes.set(stored.id, stored)
+      memberships.set(stored.id, new Set())
+      return stored
     },
     async getClass(id) {
       return classes.get(id)
@@ -57,7 +59,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
 
   describe('class lifecycle', () => {
     it('creates a class owned by the teacher with a stable id', async () => {
-      const res = await svc.createClass({ actor: teacher(), name: '9А математика', subjectVersionId: 'subj-math-2026' })
+      const res = await svc.createClass({ actor: teacher(), name: '9А математика', subjectVersionId: 'math-oge-2026' })
       expect(res.ok).toBe(true)
       if (res.ok) {
         expect(res.class.id).toBeTruthy()
@@ -67,7 +69,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('rejects an empty name or missing subject version', async () => {
-      const emptyName = await svc.createClass({ actor: teacher(), name: '   ', subjectVersionId: 's' })
+      const emptyName = await svc.createClass({ actor: teacher(), name: '   ', subjectVersionId: 'math-oge-2026' })
       expect(emptyName.ok).toBe(false)
       if (!emptyName.ok) expect(emptyName.code).toBe('validation_error')
       const noSubject = await svc.createClass({ actor: teacher(), name: 'x', subjectVersionId: '' })
@@ -75,14 +77,24 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
       if (!noSubject.ok) expect(noSubject.code).toBe('validation_error')
     })
 
+    it('ECLASS-14/56: unknown subjectVersionId is rejected at the SERVICE layer (no free-text subjects)', async () => {
+      const svc = createClassService({ store: makeStore() })
+      const result = await svc.createClass({
+        actor: teacher(),
+        name: 'Валидный класс',
+        subjectVersionId: 'not-in-catalog-9999',
+      })
+      expect(result).toEqual({ ok: false, code: 'validation_error' })
+    })
+
     it('CB-3: a STUDENT actor is forbidden from creating a class', async () => {
-      const res = await svc.createClass({ actor: student(), name: 'x', subjectVersionId: 's' })
+      const res = await svc.createClass({ actor: student(), name: 'x', subjectVersionId: 'math-oge-2026' })
       expect(res.ok).toBe(false)
       if (!res.ok) expect(res.code).toBe('forbidden')
     })
 
     it('renames a class owned by the teacher', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const renamed = await svc.renameClass(teacher(), created.class.id, 'new name')
       expect(renamed.ok).toBe(true)
@@ -90,7 +102,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('forbids renaming a class owned by another teacher', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const res = await svc.renameClass(foreignTeacher(), created.class.id, 'x')
       expect(res.ok).toBe(false)
@@ -98,7 +110,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('CB-3: a STUDENT actor is forbidden from renaming', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const res = await svc.renameClass(student(), created.class.id, 'x')
       expect(res.ok).toBe(false)
@@ -106,7 +118,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('rejects renaming to an empty name', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'old', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const res = await svc.renameClass(teacher(), created.class.id, '')
       expect(res.ok).toBe(false)
@@ -114,7 +126,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('archives a class; archived classes are hidden by default but history remains', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const archived = await svc.archiveClass(teacher(), created.class.id)
       expect(archived.ok).toBe(true)
@@ -131,7 +143,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
 
   describe('roster rules', () => {
     it('adds a student to the roster of an owned class', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const add = await svc.addStudent(teacher(), created.class.id, 'stu-1')
       expect(add.ok).toBe(true)
@@ -140,7 +152,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('prevents duplicate membership of the same student in a class', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       await svc.addStudent(teacher(), created.class.id, 'stu-1')
       const dup = await svc.addStudent(teacher(), created.class.id, 'stu-1')
@@ -151,7 +163,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('removes a student from the roster', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       await svc.addStudent(teacher(), created.class.id, 'stu-1')
       const rm = await svc.removeStudent(teacher(), created.class.id, 'stu-1')
@@ -161,8 +173,8 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('moving a student removes from old class and adds to new', async () => {
-      const a = await svc.createClass({ actor: teacher(), name: 'a', subjectVersionId: 's' })
-      const b = await svc.createClass({ actor: teacher(), name: 'b', subjectVersionId: 's' })
+      const a = await svc.createClass({ actor: teacher(), name: 'a', subjectVersionId: 'math-oge-2026' })
+      const b = await svc.createClass({ actor: teacher(), name: 'b', subjectVersionId: 'math-oge-2026' })
       if (!a.ok || !b.ok) throw new Error('setup')
       await svc.addStudent(teacher(), a.class.id, 'stu-1')
       const move = await svc.moveStudent(teacher(), 'stu-1', a.class.id, b.class.id)
@@ -175,7 +187,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
     })
 
     it('roster operations on a foreign class return not_found', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const add = await svc.addStudent(foreignTeacher(), created.class.id, 'stu-1')
       expect(add.ok).toBe(false)
@@ -185,7 +197,7 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
 
   describe('authorization consistency with domain policy', () => {
     it('every mutating op delegates to authorize (owner-only)', async () => {
-      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 's' })
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
       const decision = authorize(foreignTeacher(), 'update', { ownerId: 'tea-1' })
       expect(decision.allowed).toBe(false)

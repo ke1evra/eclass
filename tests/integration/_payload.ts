@@ -71,7 +71,7 @@ const withMongoRetry = async <T>(fn: () => Promise<T>, attempts = 5): Promise<T>
 
 export const clearData = async (): Promise<void> => {
   const p = await getPayloadSingleton()
-  for (const slug of ['users', 'sessions', 'classes', 'memberships']) {
+  for (const slug of ['users', 'sessions', 'classes', 'memberships', 'invites', 'email-jobs']) {
     await withMongoRetry(async () => {
       const { docs } = await p.find({ collection: slug, limit: 100, overrideAccess: true })
       for (const d of docs) {

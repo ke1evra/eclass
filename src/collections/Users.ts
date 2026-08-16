@@ -40,11 +40,16 @@ export const Users: CollectionConfig = {
   hooks: {
     beforeChange: [
       ({ data, operation, req, originalDoc }) => {
-        // On CREATE the role is always forced to 'teacher' — never trusted
-        // from the client. Admin is provisioned out-of-band (script/migration
-        // with disableHooks), never via this collection's create path.
+        // On CREATE the role is forced — never trusted from a client. Public
+        // signup is teacher-only. The ONE exception is the trusted server path
+        // (Local API: req.payloadAPI === 'local' and no authenticated user)
+        // used by the atomic invite join (ECLASS-57) to provision student
+        // accounts: any HTTP-originated create (payloadAPI 'rest') still lands
+        // on 'teacher' even when it asks for 'student' or 'admin'.
         if (operation === 'create') {
-          return { ...data, role: 'teacher' }
+          const localApi = (req as { payloadAPI?: string }).payloadAPI === 'local'
+          const trustedServerStudent = localApi && !req.user && data?.role === 'student'
+          return { ...data, role: trustedServerStudent ? 'student' : 'teacher' }
         }
         // On UPDATE, privileged fields are restored from the existing doc so a
         // CLIENT cannot mutate them. A trusted server process (no req.user, or
@@ -89,12 +94,13 @@ export const Users: CollectionConfig = {
     {
       // ECLASS-67: SHA-256 hash of the one-time email-confirmation token. The
       // RAW token is never persisted — only this hash. Server-only write
-      // (clients cannot set it); unique so the atomic update-by-where in the
-      // confirm flow can locate exactly one candidate. Mongo permits multiple
-      // nulls in a unique index, so users without a pending token coexist.
+      // (clients cannot set it). Indexed for the atomic confirm lookup, NOT
+      // unique: a Mongo unique index also forbids two users having null/absent
+      // hash simultaneously (multiple nulls collide), which would break the
+      // confirm flow as soon as a second confirmed user exists. Token
+      // uniqueness comes from 192 bits of randomness, not from the index.
       name: 'emailConfirmationTokenHash',
       type: 'text',
-      unique: true,
       index: true,
       admin: { readOnly: true },
       access: { update: () => false },
@@ -102,6 +108,24 @@ export const Users: CollectionConfig = {
     {
       // ECLASS-67: epoch-ms when the confirmation token expires. Server-only.
       name: 'emailConfirmationTokenExpiresAt',
+      type: 'number',
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
+      // ECLASS-69: SHA-256 hash of the one-time password-reset token. Same
+      // policy as the confirmation hash: raw token never persisted, indexed
+      // (NOT unique — Mongo unique forbids concurrent nulls; uniqueness comes
+      // from 192 bits of entropy), server-only write.
+      name: 'passwordResetTokenHash',
+      type: 'text',
+      index: true,
+      admin: { readOnly: true },
+      access: { update: () => false },
+    },
+    {
+      // ECLASS-69: epoch-ms when the reset token expires. Server-only.
+      name: 'passwordResetTokenExpiresAt',
       type: 'number',
       admin: { readOnly: true },
       access: { update: () => false },

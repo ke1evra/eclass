@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { Payload } from 'payload'
 import { APIError } from 'payload'
 import { createEmailConfirm } from '@/auth/email-confirm'
+import { enforceRateLimit, SIGNUP_IP_RATE, SIGNUP_RATE } from '@/auth/rate-limit'
 import { isEmailConfigured } from '@/email/transport'
 
 /**
@@ -20,6 +21,29 @@ export async function handleSignup(req: NextRequest, payload: Payload) {
   if (!isEmailConfigured()) {
     return NextResponse.json({ ok: false, code: 'email_not_configured' }, { status: 503 })
   }
+
+  // Shared-store limiter (ECLASS-59), fail-closed like every auth mutation.
+  let limited: Response | null
+  try {
+    limited = await enforceRateLimit({
+      payload,
+      headers: req.headers,
+      bucket: 'signup',
+      policy: SIGNUP_RATE,
+      account: body.email,
+    })
+    if (!limited) {
+      limited = await enforceRateLimit({
+        payload,
+        headers: req.headers,
+        bucket: 'signup-ip',
+        policy: SIGNUP_IP_RATE,
+      })
+    }
+  } catch {
+    return NextResponse.json({ ok: false, code: 'error' }, { status: 503 })
+  }
+  if (limited) return limited
 
   const emailConfirm = createEmailConfirm({
     payload,
