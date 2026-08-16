@@ -177,7 +177,9 @@ test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
     const classUrl = page.url()
 
     // --- A7 student join on a 390px mobile viewport -------------------------
-    const studentCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    // ECLASS-16 criterion: the student shell works from 320px (narrow phones),
+    // not just the 390px Figma baseline.
+    const studentCtx = await browser.newContext({ viewport: { width: 320, height: 690 } })
     const student = await studentCtx.newPage()
     await student.goto(`/join?code=${inviteCode}`)
     await expect(student.getByRole('heading', { name: /вход в класс по коду/i })).toBeVisible()
@@ -193,6 +195,10 @@ test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
     await expect(student.getByText(/Математика/i).first()).toBeVisible()
     await expect(student.getByText(`E2E класс ${runId}`).first()).toBeVisible()
     await expect(student.getByTestId('empty-state')).toBeVisible()
+
+    // 320px: no horizontal scrolling on the student shell.
+    const scrollWidth = await student.evaluate(() => document.documentElement.scrollWidth)
+    expect(scrollWidth).toBeLessThanOrEqual(320)
 
     const a11yS1 = await new AxeBuilder({ page: student }).withTags(['wcag2a', 'wcag2aa']).analyze()
     expect(
@@ -215,7 +221,7 @@ test.describe('P1 identity flow — ECLASS-2/13/14/15/16/56', () => {
     await expect(page.getByText('Аня Е2Е (9А)')).toBeVisible()
 
     // --- E5: the single-use code cannot admit a second student --------------
-    const replayCtx = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const replayCtx = await browser.newContext({ viewport: { width: 320, height: 690 } })
     const replay = await replayCtx.newPage()
     await replay.goto(`/join?code=${inviteCode}`)
     await replay.fill('#displayName', 'Второй Ученик')

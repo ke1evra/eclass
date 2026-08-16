@@ -43,6 +43,38 @@ async function resetTokenFor(login: string): Promise<string> {
 }
 
 test.describe('ECLASS-69: password reset flow', () => {
+test('keyboard-only: the A5 reset flow is operable without a pointer (ECLASS-69)', async ({ page, baseURL }) => {
+    test.setTimeout(120_000)
+
+    const email = `e2e-kbd-reset-${runId}@eclasstest.ru`
+    const api = await pwRequest.newContext({ baseURL })
+    expect((await api.post('/api/auth/signup', { data: { email, password: oldPassword } })).status()).toBe(200)
+    const confirmToken = await signupTokenFor(email)
+    expect((await api.post('/api/auth/confirm', { data: { token: confirmToken } })).status()).toBe(200)
+    await api.dispose()
+
+    // --- A5 request, KEYBOARD ONLY -----------------------------------------
+    await page.goto('/reset')
+    await page.keyboard.press('Tab') // #email
+    await expect(page.locator('#email')).toBeFocused()
+    await page.keyboard.type(email)
+    await page.keyboard.press('Tab') // submit
+    await page.keyboard.press('Enter')
+    await page.waitForURL('**/reset/pending**')
+
+    const token = await resetTokenFor(email)
+
+    // --- A5 confirm, KEYBOARD ONLY ------------------------------------------
+    await page.goto(`/reset/confirm?token=${token}`)
+    await page.keyboard.press('Tab') // #password
+    await expect(page.locator('#password')).toBeFocused()
+    await page.keyboard.type(newPassword)
+    await page.keyboard.press('Tab') // submit
+    await page.keyboard.press('Enter')
+    await page.waitForURL('**/login?notice=reset')
+  })
+
+
   test('A2 → A5 → pending → token → new password → A2 login with the new password', async ({ page, baseURL }) => {
     test.setTimeout(120_000)
 
