@@ -6,6 +6,7 @@ import { getPageAuth } from '@/auth/server'
 import { getClassServices } from '@/classes/server'
 import { findSubjectVersion } from '@/content/catalog'
 import { archiveClassAction, createInviteAction, logoutAction, renameClassAction } from '../../../actions'
+import { listForClass } from '@/assignments/service'
 
 /**
  * T3 — Class detail: invite + roster (ECLASS-56 Stage C, Figma 15:46 +
@@ -42,6 +43,8 @@ export default async function ClassDetailPage({
     overrideAccess: true,
     depth: 0,
   })
+
+  const works = await listForClass(payload, actor.id, id)
 
   const subject = findSubjectVersion(cls.class.subjectVersionId)
 
@@ -92,6 +95,28 @@ export default async function ClassDetailPage({
               <li key={u.id}>{(u as { name?: string }).name ?? 'Без имени'}</li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="works" className="card">
+        <h2 id="works">Работы класса</h2>
+        <p><Link className="button" href={`/teacher/classes/${id}/new-work`}>Собрать новую работу</Link></p>
+        {works.length === 0 ? (
+          <p data-testid="empty-works">Работ пока нет.</p>
+        ) : (
+          <table className="works-table">
+            <thead><tr><th>Название</th><th>Вопросов</th><th>Сдано</th><th>Срок</th></tr></thead>
+            <tbody>
+              {works.map((w) => (
+                <tr key={w.id}>
+                  <td>{w.title}</td>
+                  <td>{w.questionCount}</td>
+                  <td>{w.submitted} / {w.recipients}</td>
+                  <td>{w.dueAt ? new Date(w.dueAt).toLocaleDateString('ru-RU') : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </section>
 

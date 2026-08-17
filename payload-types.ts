@@ -73,6 +73,10 @@ export interface Config {
     classes: Class;
     memberships: Membership;
     invites: Invite;
+    questions: Question;
+    assignments: Assignment;
+    attempts: Attempt;
+    attachments: Attachment;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
@@ -86,6 +90,10 @@ export interface Config {
     classes: ClassesSelect<false> | ClassesSelect<true>;
     memberships: MembershipsSelect<false> | MembershipsSelect<true>;
     invites: InvitesSelect<false> | InvitesSelect<true>;
+    questions: QuestionsSelect<false> | QuestionsSelect<true>;
+    assignments: AssignmentsSelect<false> | AssignmentsSelect<true>;
+    attempts: AttemptsSelect<false> | AttemptsSelect<true>;
+    attachments: AttachmentsSelect<false> | AttachmentsSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
@@ -234,6 +242,160 @@ export interface Invite {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "questions".
+ */
+export interface Question {
+  id: string;
+  subjectVersionId: string;
+  code: string;
+  revisionNumber: number;
+  type: 'single-choice' | 'multiple-choice' | 'short-text' | 'extended-text';
+  topic: string;
+  stem: string;
+  options?:
+    | {
+        id: string;
+        text: string;
+      }[]
+    | null;
+  answerKey?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  points: number;
+  source: 'fipi' | 'authored';
+  editorStatus: 'draft' | 'review' | 'published' | 'retired';
+  publishedAt?: number | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "assignments".
+ */
+export interface Assignment {
+  id: string;
+  ownerId: string;
+  classId: string;
+  title: string;
+  status: 'draft' | 'assigned';
+  dueAt?: number | null;
+  questionSnapshot: {
+    code: string;
+    type: string;
+    topic: string;
+    stem: string;
+    options?:
+      | {
+          id: string;
+          text: string;
+        }[]
+      | null;
+    answerKey?:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+    points: number;
+    id?: string | null;
+  }[];
+  recipientIds: {
+    id?: string | null;
+  }[];
+  createdAt: number;
+  updatedAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "attempts".
+ */
+export interface Attempt {
+  id: string;
+  assignmentId: string;
+  classId: string;
+  ownerId: string;
+  studentId: string;
+  title: string;
+  dueAt?: number | null;
+  subjectVersionId: string;
+  status: 'assigned' | 'in_progress' | 'submitted' | 'checked';
+  answers?:
+    | {
+        code: string;
+        value?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        attachmentIds?:
+          | {
+              id?: string | null;
+            }[]
+          | null;
+        clientVersion?: number | null;
+        savedAt?: number | null;
+        id?: string | null;
+      }[]
+    | null;
+  scores?:
+    | {
+        code: string;
+        auto?: number | null;
+        manual?: number | null;
+        teacherComment?: string | null;
+        flaggedForReview?: boolean | null;
+        id?: string | null;
+      }[]
+    | null;
+  totalScore?: number | null;
+  maxScore?: number | null;
+  submittedAt?: number | null;
+  checkedAt?: number | null;
+  idempotencyKey?: string | null;
+  comments?:
+    | {
+        authorId: string;
+        authorRole: 'teacher' | 'student';
+        internal?: boolean | null;
+        body: string;
+        createdAt: number;
+        id?: string | null;
+      }[]
+    | null;
+  createdAt: number;
+  updatedAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "attachments".
+ */
+export interface Attachment {
+  id: string;
+  attemptId: string;
+  questionCode: string;
+  studentId: string;
+  storedName: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  createdAt: number;
+  updatedAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
 export interface PayloadKv {
@@ -279,6 +441,22 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'invites';
         value: string | Invite;
+      } | null)
+    | ({
+        relationTo: 'questions';
+        value: string | Question;
+      } | null)
+    | ({
+        relationTo: 'assignments';
+        value: string | Assignment;
+      } | null)
+    | ({
+        relationTo: 'attempts';
+        value: string | Attempt;
+      } | null)
+    | ({
+        relationTo: 'attachments';
+        value: string | Attachment;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -419,6 +597,136 @@ export interface InvitesSelect<T extends boolean = true> {
   usedBy?: T;
   usedAt?: T;
   revoked?: T;
+  updatedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "questions_select".
+ */
+export interface QuestionsSelect<T extends boolean = true> {
+  subjectVersionId?: T;
+  code?: T;
+  revisionNumber?: T;
+  type?: T;
+  topic?: T;
+  stem?: T;
+  options?:
+    | T
+    | {
+        id?: T;
+        text?: T;
+      };
+  answerKey?: T;
+  points?: T;
+  source?: T;
+  editorStatus?: T;
+  publishedAt?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "assignments_select".
+ */
+export interface AssignmentsSelect<T extends boolean = true> {
+  ownerId?: T;
+  classId?: T;
+  title?: T;
+  status?: T;
+  dueAt?: T;
+  questionSnapshot?:
+    | T
+    | {
+        code?: T;
+        type?: T;
+        topic?: T;
+        stem?: T;
+        options?:
+          | T
+          | {
+              id?: T;
+              text?: T;
+            };
+        answerKey?: T;
+        points?: T;
+        id?: T;
+      };
+  recipientIds?:
+    | T
+    | {
+        id?: T;
+      };
+  createdAt?: T;
+  updatedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "attempts_select".
+ */
+export interface AttemptsSelect<T extends boolean = true> {
+  assignmentId?: T;
+  classId?: T;
+  ownerId?: T;
+  studentId?: T;
+  title?: T;
+  dueAt?: T;
+  subjectVersionId?: T;
+  status?: T;
+  answers?:
+    | T
+    | {
+        code?: T;
+        value?: T;
+        attachmentIds?:
+          | T
+          | {
+              id?: T;
+            };
+        clientVersion?: T;
+        savedAt?: T;
+        id?: T;
+      };
+  scores?:
+    | T
+    | {
+        code?: T;
+        auto?: T;
+        manual?: T;
+        teacherComment?: T;
+        flaggedForReview?: T;
+        id?: T;
+      };
+  totalScore?: T;
+  maxScore?: T;
+  submittedAt?: T;
+  checkedAt?: T;
+  idempotencyKey?: T;
+  comments?:
+    | T
+    | {
+        authorId?: T;
+        authorRole?: T;
+        internal?: T;
+        body?: T;
+        createdAt?: T;
+        id?: T;
+      };
+  createdAt?: T;
+  updatedAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "attachments_select".
+ */
+export interface AttachmentsSelect<T extends boolean = true> {
+  attemptId?: T;
+  questionCode?: T;
+  studentId?: T;
+  storedName?: T;
+  originalName?: T;
+  mimeType?: T;
+  size?: T;
+  createdAt?: T;
   updatedAt?: T;
 }
 /**

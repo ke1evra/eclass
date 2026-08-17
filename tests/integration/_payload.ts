@@ -71,7 +71,7 @@ const withMongoRetry = async <T>(fn: () => Promise<T>, attempts = 5): Promise<T>
 
 export const clearData = async (): Promise<void> => {
   const p = await getPayloadSingleton()
-  for (const slug of ['users', 'sessions', 'classes', 'memberships', 'invites', 'email-jobs']) {
+  for (const slug of ['users', 'sessions', 'classes', 'memberships', 'invites', 'email-jobs', 'attempts', 'assignments', 'questions', 'attachments']) {
     await withMongoRetry(async () => {
       const { docs } = await p.find({ collection: slug, limit: 100, overrideAccess: true })
       for (const d of docs) {
@@ -79,6 +79,10 @@ export const clearData = async (): Promise<void> => {
       }
     })
   }
+  // Raw Mongo collections (no Payload slug): rate-limit windows.
+  await withMongoRetry(async () => {
+    await payloadSingleton!.db.connection.collection('rate-limits').deleteMany({})
+  })
 }
 
 export { withMongoRetry }

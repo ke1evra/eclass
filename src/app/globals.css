@@ -149,3 +149,34 @@ ol.steps li { margin: 0.4rem 0; }
   main { padding: 1.25rem 0.9rem 3rem; }
 }
 
+
+/* --- Works: builder, monitoring, runner, review (P2/P3/P5) ------------- */
+
+.bank-list, .review-list, .runner-list, .works-list, .comments { list-style: none; padding: 0; margin: 0; }
+.bank-item, .review-item, .runner-item { padding: 0.75rem 0; border-bottom: 1px solid var(--line); }
+.bank-label { display: block; cursor: pointer; }
+.bank-meta { color: var(--muted); font-size: 0.85rem; }
+.bank-options { margin: 0.3rem 0 0 1.4rem; color: var(--muted); padding: 0; list-style: none; }
+.bank-filters { margin: 0.75rem 0; }
+.checkbox-row { display: block; margin: 0.35rem 0; min-height: 32px; }
+.checkbox-row input { min-height: 20px; }
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; padding: 0.75rem 1rem; }
+legend { font-weight: 600; padding: 0 0.4rem; }
+
+.works-table { width: 100%; border-collapse: collapse; }
+.works-table th, .works-table td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--line); }
+.works-table th { color: var(--muted); font-weight: 600; }
+
+.runner-nav { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.75rem 0; }
+.runner-dot {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 36px; min-height: 36px; border: 1px solid var(--line); border-radius: 8px;
+  text-decoration: none; color: var(--accent);
+}
+.answer-box { margin: 0.4rem 0; padding: 0.6rem 0.8rem; background: #f8fafc; border-left: 3px solid var(--accent); white-space: pre-wrap; }
+.review-stem { font-weight: 600; }
+.review-score { color: var(--muted); font-size: 0.9rem; }
+.chosen { font-weight: 600; }
+.comments li { margin: 0.4rem 0; padding: 0.5rem 0.7rem; background: #f8fafc; border-radius: 8px; }
+.attachments { color: var(--muted); }
+.mastery-bar { font-variant-numeric: tabular-nums; }

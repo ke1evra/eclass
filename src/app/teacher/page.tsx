@@ -44,6 +44,9 @@ export default async function TeacherPage() {
           <p>
             <Link className="button" href="/teacher/classes/new">
               Создать класс
+            </Link>{' '}
+            <Link className="button ghost" href="/teacher/review">
+              Проверка работ
             </Link>
           </p>
         </section>
@@ -52,6 +55,9 @@ export default async function TeacherPage() {
           <p>
             <Link className="button" href="/teacher/classes/new">
               Создать класс
+            </Link>{' '}
+            <Link className="button ghost" href="/teacher/review">
+              Проверка работ
             </Link>
           </p>
           <ul className="class-list">
