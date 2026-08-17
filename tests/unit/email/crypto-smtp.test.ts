@@ -7,7 +7,7 @@ import {
   resetTransportEnvInit,
   setEmailTransport,
 } from '@/email/transport'
-import { isSealed, openEmailBody, sealEmailBody } from '@/email/crypto'
+import { isSealed, openEmailBody, resetEmailBodyKeyCache, sealEmailBody } from '@/email/crypto'
 
 /**
  * ECLASS-68 (defect 6) — SMTP adapter + env wiring, unit level.
@@ -63,5 +63,26 @@ describe('ECLASS-68: sealed body helpers', () => {
     expect(isSealed('plain text')).toBe(false)
     expect(isSealed(null)).toBe(false)
     expect(isSealed(undefined)).toBe(false)
+    expect(isSealed('')).toBe(false)
+  })
+
+  it('openEmailBody rejects malformed sealed bodies and wrong keys', () => {
+    expect(() => openEmailBody('not-sealed-at-all')).toThrow(/malformed/)
+    expect(() => openEmailBody('v2:only:three')).toThrow(/malformed/)
+    // Structurally valid, but the auth tag will not verify under a rotated key.
+    const sealed = sealEmailBody('секрет')
+    rotateKeyForTest()
+    expect(() => openEmailBody(sealed)).toThrow(/authentication/)
+    rotateKeyForTest() // back to the original env-derived key
+    expect(openEmailBody(sealed)).toBe('секрет')
   })
 })
+
+/** Flip PAYLOAD_SECRET (via the reset seam) to simulate key rotation. */
+const originalSecret = process.env.PAYLOAD_SECRET
+function rotateKeyForTest() {
+  if (process.env.PAYLOAD_SECRET === originalSecret) process.env.PAYLOAD_SECRET = 'rotated-test-secret'
+  else if (originalSecret === undefined) delete process.env.PAYLOAD_SECRET
+  else process.env.PAYLOAD_SECRET = originalSecret
+  resetEmailBodyKeyCache()
+}

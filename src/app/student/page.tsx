@@ -1,6 +1,10 @@
 import { getPageActor } from '@/auth/server'
 import { getStudentWorkspaceService } from '@/students/server'
 import { logoutAction, updateDisplayNameAction } from '../actions'
+import { createAttemptsService } from '@/attempts/service'
+import { getPayload } from 'payload'
+import config from '@/payload.config'
+import Link from 'next/link'
 
 /**
  * /student — S1 class joined / S2 task list / A8 profile (ECLASS-56 Stage C,
@@ -25,6 +29,11 @@ export default async function StudentPage() {
       </main>
     )
   }
+
+  const payload = await getPayload({ config })
+  const attemptsSvc = createAttemptsService(payload)
+  const works = await attemptsSvc.listForStudent(actor.id)
+  const progress = await attemptsSvc.progress(actor.id)
 
   const svc = await getStudentWorkspaceService()
   const dashboard = await svc.getDashboard(actor.id)
@@ -65,16 +74,47 @@ export default async function StudentPage() {
 
       <section aria-labelledby="assignments" className="card">
         <h2 id="assignments">Мои работы</h2>
-        {dashboard.assignments.length === 0 ? (
+        {works.length === 0 ? (
           <p data-testid="empty-state">Пока ничего не задано.</p>
         ) : (
-          <ul>
-            {dashboard.assignments.map((a) => (
-              <li key={a.id}>
-                <a href={`/student/work/${a.id}`}>{a.title}</a> <span>({a.status})</span>
+          <ul className="works-list">
+            {works.map((w) => (
+              <li key={w.id}>
+                <Link href={`/student/work/${w.id}`}>{w.title}</Link>{' '}
+                <span>(
+                  {w.status === 'assigned' && 'не начато'}
+                  {w.status === 'in_progress' && 'в работе'}
+                  {w.status === 'submitted' && 'сдано'}
+                  {w.status === 'checked' && `проверено: ${w.totalScore ?? 0}/${w.maxScore ?? 0}`}
+                )</span>
+                {w.dueAt ? <span> · до {new Date(w.dueAt).toLocaleString('ru-RU')}</span> : null}
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="progress" className="card">
+        <h2 id="progress">Прогресс по темам</h2>
+        {progress.topics.length === 0 ? (
+          <p>Статистика появится после первых проверенных работ.</p>
+        ) : (
+          <table className="works-table">
+            <thead><tr><th>Тема</th><th>Освоение</th></tr></thead>
+            <tbody>
+              {progress.topics
+                .sort((a, b) => a.percent - b.percent)
+                .map((t) => (
+                  <tr key={t.topic}>
+                    <td>{t.topic}</td>
+                    <td>
+                      <span className="mastery-bar" style={{ display: 'inline-block', minWidth: '3rem' }}>{t.percent}%</span>
+                      <span className="bank-meta"> ({t.earned}/{t.max} б.)</span>
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
         )}
       </section>
 

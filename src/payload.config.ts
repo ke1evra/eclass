@@ -9,6 +9,10 @@ import { EmailJobs } from './collections/EmailJobs'
 import { Classes } from './collections/Classes'
 import { Memberships } from './collections/Memberships'
 import { Invites } from './collections/Invites'
+import { Questions } from './collections/Questions'
+import { Assignments } from './collections/Assignments'
+import { Attempts } from './collections/Attempts'
+import { Attachments } from './collections/Attachments'
 
 const filename = fileURLToPath(import.meta.url)
 const dirname = path.dirname(filename)
@@ -46,5 +50,5 @@ export default buildConfig({
   typescript: {
     outputFile: path.resolve(dirname, '../payload-types.ts'),
   },
-  collections: [Users, Sessions, EmailJobs, Classes, Memberships, Invites],
+  collections: [Users, Sessions, EmailJobs, Classes, Memberships, Invites, Questions, Assignments, Attempts, Attachments],
 })

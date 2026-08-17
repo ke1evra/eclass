@@ -189,6 +189,21 @@ describe('content versioning — ECLASS-18', () => {
   })
 
   describe('publish gate edge cases', () => {
+    it('unknown question ids: every entry point returns not_found', async () => {
+      const status = await svc.setEditorStatus('ghost', 'reviewed')
+      expect(status.ok).toBe(false)
+      if (!status.ok) expect(status.code).toBe('not_found')
+      const pub = await svc.publish('ghost')
+      expect(pub.ok).toBe(false)
+      if (!pub.ok) expect(pub.code).toBe('not_found')
+      const edit = await svc.editPublished('ghost', { payload: {} })
+      expect(edit.ok).toBe(false)
+      if (!edit.ok) expect(edit.code).toBe('not_found')
+      const fix = await svc.createRevisionFix('ghost', { reason: 'x', source: { kind: 'fipi', ref: 'b' } })
+      expect(fix.ok).toBe(false)
+      if (!fix.ok) expect(fix.code).toBe('not_found')
+    })
+
     it('refuses to publish a draft not marked reviewed', async () => {
       const subj = await svc.createSubjectVersion({ subject: 'math', exam: 'oge', academicYear: 2026, codifierUrl: 'c' })
       if (!subj.ok) throw new Error('setup')
