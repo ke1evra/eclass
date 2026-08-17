@@ -186,6 +186,34 @@ describe('class & roster service — ECLASS-14 / CB-3', () => {
       if (rosterB.ok) expect(rosterB.studentIds).toContain('stu-1')
     })
 
+    it('roster ops are teacher-only: a student gets forbidden everywhere', async () => {
+      const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
+      if (!created.ok) throw new Error('setup')
+      const student = { id: 'stu-9', role: 'student' as const }
+      const rm = await svc.removeStudent(student, created.class.id, 'stu-1')
+      expect(rm.ok).toBe(false)
+      if (!rm.ok) expect(rm.code).toBe('forbidden')
+      const move = await svc.moveStudent(student, 'stu-1', created.class.id, created.class.id)
+      expect(move.ok).toBe(false)
+      if (!move.ok) expect(move.code).toBe('forbidden')
+      const roster = await svc.getRoster(student, created.class.id)
+      expect(roster.ok).toBe(false)
+      if (!roster.ok) expect(roster.code).toBe('forbidden')
+    })
+
+    it('moving into a class the teacher does not own fails before any write', async () => {
+      const mine = await svc.createClass({ actor: teacher(), name: 'mine', subjectVersionId: 'math-oge-2026' })
+      const theirs = await svc.createClass({ actor: foreignTeacher(), name: 'theirs', subjectVersionId: 'math-oge-2026' })
+      if (!mine.ok || !theirs.ok) throw new Error('setup')
+      await svc.addStudent(teacher(), mine.class.id, 'stu-2')
+      const move = await svc.moveStudent(teacher(), 'stu-2', mine.class.id, theirs.class.id)
+      expect(move.ok).toBe(false)
+      if (!move.ok) expect(move.code).toBe('not_found')
+      // Nothing was removed from the source class.
+      const roster = await svc.getRoster(teacher(), mine.class.id)
+      if (roster.ok) expect(roster.studentIds).toContain('stu-2')
+    })
+
     it('roster operations on a foreign class return not_found', async () => {
       const created = await svc.createClass({ actor: teacher(), name: 'c', subjectVersionId: 'math-oge-2026' })
       if (!created.ok) throw new Error('setup')
