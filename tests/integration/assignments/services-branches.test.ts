@@ -39,6 +39,14 @@ async function seedQ(
   })
 }
 
+
+/** Narrow a service result union and assert its failure code. */
+async function expectFail(r: Promise<{ ok: boolean; code?: string }>, code: string) {
+  const res = await r
+  expect(res.ok).toBe(false)
+  expect(res.code).toBe(code)
+}
+
 async function seedActors(p: Parameters<typeof createAndAssign>[0]): Promise<{ teacher: Actor; student: Actor; classId: string }> {
   const teacherRow = await p.create({
     collection: 'users',
@@ -102,10 +110,10 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     const f = await seedActors(p)
     await seedQ(p, 'sc1')
 
-    expect((await createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: '  ', questionCodes: ['sc1'], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' })).code).toBe('validation_error')
-    expect((await createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: [], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' })).code).toBe('validation_error')
-    expect((await createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: ['sc1'], recipientIds: [], subjectVersionId: 'math-oge-2026' })).code).toBe('validation_error')
-    expect((await createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: ['nope'], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' })).code).toBe('question_not_found')
+    await expectFail(createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: '  ', questionCodes: ['sc1'], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' }), 'validation_error')
+    await expectFail(createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: [], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' }), 'validation_error')
+    await expectFail(createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: ['sc1'], recipientIds: [], subjectVersionId: 'math-oge-2026' }), 'validation_error')
+    await expectFail(createAndAssign(p, { ownerId: f.teacher.id, classId: f.classId, title: 'T', questionCodes: ['nope'], recipientIds: [f.student.id], subjectVersionId: 'math-oge-2026' }), 'question_not_found')
 
     const dueAt = Date.now() + 86_400_000
     await assign(p, f, ['sc1'], 'Со сроком')
@@ -173,7 +181,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     const svc = createAttemptsService(p)
     const id = (await svc.listForStudent(f.student.id))[0]!.id
 
-    expect((await svc.saveAnswer(f.student, id, { code: 'zzz', value: 'x', clientVersion: 1 })).code).toBe('not_found')
+    await expectFail(svc.saveAnswer(f.student, id, { code: 'zzz', value: 'x', clientVersion: 1 }), 'not_found')
 
     await svc.saveAnswer(f.student, id, { code: 'st1', value: '42', attachmentIds: ['att-1'], clientVersion: 1 })
     await svc.saveAnswer(f.student, id, { code: 'st1', value: '43', clientVersion: 2 }) // no new attachments
@@ -238,7 +246,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     }
 
     const foreign = { id: 'not-the-owner', role: 'teacher' as const }
-    expect((await svc.teacherView(foreign, id)).code).toBe('not_found')
+    await expectFail(svc.teacherView(foreign, id), 'not_found')
 
     // Rubric scoring on a question whose score row is MISSING (row set removed)
     // takes the insert branch.
@@ -327,7 +335,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     const id = (await svc.listForStudent(f.student.id))[0]!.id
 
     // Not checked yet.
-    expect((await svc.remediation(f.teacher, id, (c) => c.map((q) => q.code))).code).toBe('invalid_transition')
+    await expectFail(svc.remediation(f.teacher, id, (c) => c.map((q) => q.code)), 'invalid_transition')
 
     // Wrong answer → topic A fails; finalize to make it remediable.
     await svc.saveAnswer(f.student, id, { code: 'sc1', value: 'b', clientVersion: 1 })
@@ -335,7 +343,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     await svc.finalize(f.teacher, id)
 
     // Picker returns nothing → question_not_found.
-    expect((await svc.remediation(f.teacher, id, () => [])).code).toBe('question_not_found')
+    await expectFail(svc.remediation(f.teacher, id, () => []), 'question_not_found')
 
     // Happy path: a NEW assignment for the failed topic, excluding seen codes.
     const created = await svc.remediation(f.teacher, id, (candidates) => {
@@ -362,7 +370,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
       return candidates.map((c) => c.code)
     })
     expect(ghostRes.ok).toBe(true)
-    expect((await svc.remediation({ id: 'stranger', role: 'teacher' }, id, (c) => c.map((q) => q.code))).code).toBe('not_found')
+    await expectFail(svc.remediation({ id: 'stranger', role: 'teacher' }, id, (c) => c.map((q) => q.code)), 'not_found')
 
     // All-correct work has nothing to remediate.
     const ok = await assign(p, f, ['sc2'], 'Идеальная')
@@ -370,7 +378,7 @@ integrationSuite('work-flow services: branch coverage (bank/validation/monitorin
     await svc.saveAnswer(f.student, id2, { code: 'sc2', value: 'a', clientVersion: 1 })
     await svc.submit(f.student, id2, 'rem-key-2')
     await svc.finalize(f.teacher, id2)
-    expect((await svc.remediation(f.teacher, id2, (c) => c.map((q) => q.code))).code).toBe('validation_error')
+    await expectFail(svc.remediation(f.teacher, id2, (c) => c.map((q) => q.code)), 'validation_error')
     void ok
   })
 })
