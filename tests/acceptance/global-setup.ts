@@ -32,6 +32,9 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   for (let attempt = 1; attempt <= 8; attempt++) {
     try {
       const payload = await getPayload({ config })
+      // Payload boot can finish before Mongo has created every collection/index.
+      // Seed transactions must not race that initial catalog setup.
+      await Promise.all(Object.values(payload.db.collections).map((model) => model.init()))
       const { created, total } = await seedContent(payload)
       console.log(`GLOBAL_SETUP seed: created=${created} bankTotal=${total} (attempt ${attempt})`)
       return
